@@ -42,7 +42,7 @@ def extract_points(img):
     return
 
 
-v, axs, theta = [2, 0, 0], [0, 1, 0], 1.57
-print(rotate(v, axs, theta))
+#v, axs, theta = [2, 0, 0], [0, 1, 0], 1.57
+#print(rotate(v, axs, theta))
 
 # Data for three-dimensional scattered points

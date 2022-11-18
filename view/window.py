@@ -1,18 +1,27 @@
-from PyQt6.QtWidgets import QMainWindow, QPushButton, QFileDialog
-from PyQt6.QtWidgets import QVBoxLayout, QWidget
+from PyQt6.QtWidgets import (
+    QMainWindow, QPushButton, QFileDialog,
+    QVBoxLayout, QWidget, QLabel, QMessageBox
+)
 from numpy import ndarray
+
 from view.pyplot_qt import MplCanvas
 
+from view.view_model import VOLUME
 
 class MainForm(QMainWindow):
     def __init__(self, view_model):
         super().__init__()
         self._view_model = view_model
-        self.setWindowTitle("3D volume calculator")
+        self.setWindowTitle('3D volume calculator')
         layout = QVBoxLayout()
-        self.chose_folder = QPushButton("Выбрать папку с фото")
+
+        self.chose_folder = QPushButton('Выбрать папку со снимками')
         self.chose_folder.clicked.connect(self.select)
         layout.addWidget(self.chose_folder)
+
+        self.volume = QLabel(VOLUME)
+        layout.addWidget(self.volume)
+
         self.plot = MplCanvas(self, width=5, height=4, dpi=100)
         layout.addWidget(self.plot)
 
@@ -25,7 +34,12 @@ class MainForm(QMainWindow):
         dlg.setFileMode(QFileDialog.FileMode.Directory)
 
         if dlg.exec():
-            self._folder = dlg.selectedFiles()
+            self._view_model.model_run(dlg.selectedFiles()[0])
+        else:
+            message = QMessageBox()
+            message.setText('Необходимо выбрать файл')
+            message.setWindowTitle('Ошибка')
+            message.exec()
 
     def show_3d_object(self, x: ndarray, y:ndarray, z:ndarray):
         #zdata = 20 * np.random.random(30)

@@ -30,8 +30,8 @@ def draw_contours(img, points):
     for pt in points:
         cv2.circle(canvas, (pt[0][0], pt[0][1]), 3, (0,255,0), -1)
 
-    cv2.drawContours(canvas, [points], -1, (0,0,255), 1, cv2.LINE_AA)
-    cv2.imshow('kek', canvas)
+    #cv2.drawContours(canvas, [points], -1, (0,0,255), 1, cv2.LINE_AA)
+    #cv2.imshow('kek', canvas)
 
 #img = cv2.imread("test3.jpg")
 
@@ -40,6 +40,3 @@ def draw_contours(img, points):
 #draw_contours(img, arrow_contours)
 
 # save
-cv2.namedWindow('kek')
-
-cv2.waitKey(0)
