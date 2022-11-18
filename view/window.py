@@ -1,3 +1,5 @@
+import numpy
+from matplotlib import pyplot as plt
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog,
     QVBoxLayout, QWidget, QLabel, QMessageBox
@@ -22,7 +24,7 @@ class MainForm(QMainWindow):
         self.volume = QLabel(VOLUME)
         layout.addWidget(self.volume)
 
-        self.plot = MplCanvas(self, width=5, height=4, dpi=100)
+        self.plot = MplCanvas(self, width=15, height=15, dpi=150)
         layout.addWidget(self.plot)
 
         container = QWidget()
@@ -41,8 +43,10 @@ class MainForm(QMainWindow):
             message.setWindowTitle('Ошибка')
             message.exec()
 
-    def show_3d_object(self, x: ndarray, y:ndarray, z:ndarray):
+    def show_3d_object(self, x: ndarray, z:ndarray, y:ndarray):
         #zdata = 20 * np.random.random(30)
         #xdata = np.sin(zdata) + 0.3 * np.random.randn(30)
         #ydata = np.cos(zdata) + 0.3 * np.random.randn(30)
-        self.plot.axes.scatter3D(x, y, z)
+        cmhot = plt.get_cmap("turbo")
+        s = numpy.ones(len(x))
+        self.plot.axes.scatter3D(x, y, z, s=s, c=z, cmap=cmhot)
