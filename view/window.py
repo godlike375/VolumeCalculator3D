@@ -18,6 +18,7 @@ class MainForm(QMainWindow):
         layout = QVBoxLayout()
 
         self.chose_folder = QPushButton('Выбрать папку со снимками')
+        self.chose_folder.clicked.connect(self.clear_axes)
         self.chose_folder.clicked.connect(self.select)
         layout.addWidget(self.chose_folder)
 
@@ -36,17 +37,23 @@ class MainForm(QMainWindow):
         dlg.setFileMode(QFileDialog.FileMode.Directory)
 
         if dlg.exec():
-            self._view_model.model_run(dlg.selectedFiles()[0])
+            folder_dir = dlg.selectedFiles()[0]
+            self._view_model.model_run(folder_dir)
         else:
-            message = QMessageBox()
-            message.setText('Необходимо выбрать файл')
-            message.setWindowTitle('Ошибка')
-            message.exec()
+            self.show_message('Ошибка', 'Необходимо выбрать папку')
 
-    def show_3d_object(self, x: ndarray, z:ndarray, y:ndarray):
-        #zdata = 20 * np.random.random(30)
-        #xdata = np.sin(zdata) + 0.3 * np.random.randn(30)
-        #ydata = np.cos(zdata) + 0.3 * np.random.randn(30)
-        cmhot = plt.get_cmap("turbo")
-        s = numpy.ones(len(x))
-        self.plot.axes.scatter3D(x, y, z, s=s, c=z, cmap=cmhot)
+    def clear_axes(self):
+        self.plot.axes.cla()
+
+    def show_3d_object(self, xs: ndarray, zs:ndarray, ys:ndarray):
+        colormap = plt.get_cmap("turbo")
+        self.plot.axes.scatter3D(xs, ys, zs, s=1, c=zs, cmap=colormap)
+
+    def set_volume(self, volume: float):
+        self.volume.setText(f'{VOLUME} {volume}')
+
+    def show_message(self, title, text):
+        message = QMessageBox()
+        message.setText(text)
+        message.setWindowTitle(title)
+        message.exec()

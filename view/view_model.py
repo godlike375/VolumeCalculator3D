@@ -14,8 +14,11 @@ class ViewModel:
         self._model.run(dir)
 
     def set_volume(self, volume):
-        self._view.volume.setText(f'{VOLUME} {volume}')
+        self._view.set_volume(volume)
 
     def set_points(self, points):
         res = points.tolist()
         self._view.show_3d_object(*res)
+
+    def show_message(self, title, message):
+        self._view.show_message(title, message)
