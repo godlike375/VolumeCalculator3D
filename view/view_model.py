@@ -1,4 +1,6 @@
 VOLUME = 'Объём ='
+
+
 class ViewModel:
     def __init__(self):
         self._model = None
@@ -17,8 +19,7 @@ class ViewModel:
         self._view.set_volume(volume)
 
     def set_points(self, points):
-        res = points.tolist()
-        self._view.show_3d_object(*res)
+        self._view.draw_point_cloud(*points)
 
     def show_message(self, title, message):
         self._view.show_message(title, message)

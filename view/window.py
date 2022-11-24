@@ -1,14 +1,13 @@
-import numpy
-from matplotlib import pyplot as plt
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog,
     QVBoxLayout, QWidget, QLabel, QMessageBox
 )
+from matplotlib import pyplot as plt
 from numpy import ndarray
 
-from view.pyplot_qt import MplCanvas
-
+from view.pyplot_qt import Plot3D
 from view.view_model import VOLUME
+
 
 class MainForm(QMainWindow):
     def __init__(self, view_model):
@@ -25,7 +24,7 @@ class MainForm(QMainWindow):
         self.volume = QLabel(VOLUME)
         layout.addWidget(self.volume)
 
-        self.plot = MplCanvas(self, width=15, height=15, dpi=150)
+        self.plot = Plot3D(self, width=15, height=15, dpi=150)
         layout.addWidget(self.plot)
 
         container = QWidget()
@@ -45,7 +44,7 @@ class MainForm(QMainWindow):
     def clear_axes(self):
         self.plot.axes.cla()
 
-    def show_3d_object(self, xs: ndarray, zs:ndarray, ys:ndarray):
+    def draw_point_cloud(self, xs: ndarray, zs: ndarray, ys: ndarray):
         colormap = plt.get_cmap("turbo")
         self.plot.axes.scatter3D(xs, ys, zs, s=1, c=zs, cmap=colormap)
 

@@ -2,9 +2,10 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from view.window import MainForm
 from model.business_logic import Model
 from view.view_model import ViewModel
+from view.window import MainForm
+
 
 def main():
     view_model = ViewModel()
