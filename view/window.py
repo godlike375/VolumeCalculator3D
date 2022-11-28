@@ -44,7 +44,7 @@ class MainForm(QMainWindow):
     def clear_axes(self):
         self.plot.axes.cla()
 
-    def draw_point_cloud(self, xs: ndarray, zs: ndarray, ys: ndarray):
+    def draw_point_cloud(self, xs: ndarray, ys: ndarray, zs: ndarray):
         colormap = plt.get_cmap("turbo")
         self.plot.axes.scatter3D(xs, ys, zs, s=1, c=zs, cmap=colormap)
 
