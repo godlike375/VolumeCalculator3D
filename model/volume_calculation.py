@@ -28,5 +28,4 @@ def calculate_volume(points_3d):
 
 
 def abstract_to_real_volume(volume):
-    print('IMPLEMENT THE CALCULATION')
     return volume

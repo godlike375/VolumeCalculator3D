@@ -67,7 +67,12 @@ class Model:
         points_3d.resize(shape, refcheck=False)
         points_3d[:, [0, 2]] = points
         points_3d[:, 1] = np.zeros_like(points_3d[:, 1])
-        return numpy.array([rotate_vector_by_axis(i, axis, angle) for i in points_3d])
+        if angle == 0:
+            return numpy.array(points_3d)
+        else:
+            points_3d[:, 1] = np.ones_like(points_3d[:, 1])
+            return points_3d[:]
+        #return numpy.array([rotate_vector_by_axis(i, axis, angle) for i in points_3d])
 
     def extract_number(self, image: NumberedImage):
         return image.number
