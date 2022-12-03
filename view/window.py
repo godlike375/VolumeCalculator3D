@@ -17,11 +17,12 @@ class MainForm(QMainWindow):
         layout = QVBoxLayout()
 
         self.chose_folder = QPushButton('Выбрать папку со снимками')
-        self.chose_folder.clicked.connect(self.clear_axes)
+        self.chose_folder.clicked.connect(self.clear_plot_and_volume)
         self.chose_folder.clicked.connect(self.select)
         layout.addWidget(self.chose_folder)
 
-        self.volume = QLabel(VOLUME)
+        self.volume = QLabel()
+        self.set_volume(0)
         layout.addWidget(self.volume)
 
         self.plot = Plot3D(self, width=15, height=15, dpi=150)
@@ -41,8 +42,9 @@ class MainForm(QMainWindow):
         else:
             self.show_message('Ошибка', 'Необходимо выбрать папку')
 
-    def clear_axes(self):
+    def clear_plot_and_volume(self):
         self.plot.axes.cla()
+        self.set_volume(0)
 
     def draw_point_cloud(self, xs: ndarray, ys: ndarray, zs: ndarray):
         colormap = plt.get_cmap("turbo")

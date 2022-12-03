@@ -1,5 +1,7 @@
 from copy import deepcopy
 from math import radians
+from itertools import count
+
 
 import numpy
 import numpy as np
@@ -20,24 +22,20 @@ class Model:
     def run(self, dir: str):
         images = get_files_with_numbers(dir)
         images.sort(key=self.extract_number)
-        points_3d = None
-        angle = 0
         if not len(images):
             self._view_model.show_message('Ошибка', 'Указанная папка пустая')
             return
         angle_step = DEFAULT_SCAN_DEGREE / len(images)  # degree
-        for num_img in images:
-            points = self.image_to_points(num_img.image, angle)
-            if points_3d is None:
-                points_3d = points
-            else:
-                points_3d = numpy.concatenate((points_3d, points), axis=0)
-            angle += angle_step
+        points_3d = []
+        points_2d = []
+        for num_img, angle in zip(images, count(0, angle_step)):
+            centered_points, points = self.image_to_points(num_img.image, angle)
+            points_2d.append(centered_points)
+            points_3d.extend(points)
+        points_3d = numpy.array(points_3d)
+        points_3d_unzipped = numpy.array(list(zip(*points_3d)))
 
-        points_3d_unzipped = list(zip(*points_3d))
-        points_3d_unzipped = numpy.array(points_3d_unzipped)
-
-        volume = calculate_volume(points_3d)
+        volume = calculate_volume(points_2d)
         self._view_model.set_volume(volume)
         self._view_model.set_points(points_3d_unzipped)
 
@@ -47,8 +45,8 @@ class Model:
                                          threshold=254, approximation_rate=DEFAULT_APPROXIMATION_RATE)
         contour_points = contour_points.reshape((contour_points.shape[0], contour_points.shape[2]))
         centered_points = Model.set_points_center(image, contour_points)
-        points = Model.new_rotated_axis(centered_points, radians(angle))
-        return points
+        points_3d = Model.new_rotated_axis(centered_points, radians(angle))
+        return centered_points, points_3d
 
     @staticmethod
     def set_points_center(img: ndarray, points: ndarray):
@@ -67,7 +65,7 @@ class Model:
         points_3d.resize(shape, refcheck=False)
         points_3d[:, [0, 2]] = points
         points_3d[:, 1] = np.zeros_like(points_3d[:, 1])
-        return numpy.array([rotate_vector_by_axis(i, axis, angle) for i in points_3d])
+        return [rotate_vector_by_axis(i, axis, angle).tolist() for i in points_3d]
 
     def extract_number(self, image: NumberedImage):
         return image.number
