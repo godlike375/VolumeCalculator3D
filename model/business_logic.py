@@ -43,7 +43,7 @@ class Model:
 
     @staticmethod
     def image_to_points(image: ndarray, angle: float):
-        contour_points = detect_contours(image, lower_hsv=[1, 0, 0], upper_hsv=[22, 255, 255],
+        contour_points = detect_contours(image, lower_hsv=[1, 0, 0], upper_hsv=[64, 255, 255],
                                          threshold=254, approximation_rate=DEFAULT_APPROXIMATION_RATE)
         contour_points = contour_points.reshape((contour_points.shape[0], contour_points.shape[2]))
         centered_points = Model.set_points_center(image, contour_points)
