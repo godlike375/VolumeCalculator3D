@@ -5,8 +5,9 @@ from scipy.linalg import expm, norm
 import cv2
 
 # 660 pixels = 1.35 mm it equals 489 px / mm
+# 59900 abstract volume units per mm^3
 
-CONTOUR_GAP_DETECTION = 5
+CONTOUR_GAP_DETECTION = 1.5
 
 def calc_rotation_matrix(axis, degree):
     return expm(cross(eye(3), axis / norm(axis) * degree))

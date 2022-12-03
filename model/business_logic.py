@@ -20,21 +20,33 @@ class Model:
         self._view_model = view_model
 
     def run(self, dir: str):
-        images = get_files_with_numbers(dir)
-        images.sort(key=self.extract_number)
-        if not len(images):
-            self._view_model.show_message('Ошибка', 'Указанная папка пустая')
-            return
-        angle_step = DEFAULT_SCAN_DEGREE / len(images)  # degree
-        points_3d = []
-        points_2d = []
-        for num_img, angle in zip(images, count(0, angle_step)):
-            centered_points, points = self.image_to_points(num_img.image, angle)
-            points_2d.append(centered_points)
-            points_3d.extend(points)
-        points_3d = numpy.array(points_3d)
-        points_3d_unzipped = numpy.array(list(zip(*points_3d)))
-
+        from pathlib import Path
+        from statistics import mean
+        means = []
+        for i in Path(dir).iterdir():
+            if i.is_dir():
+                areas = [float(j) for j in Path.read_text(i / 'areas.txt').split('\n')]
+                images = get_files_with_numbers(i)
+                images.sort(key=self.extract_number)
+                if not len(images):
+                    self._view_model.show_message('Ошибка', 'Указанная папка пустая')
+                    return
+                angle_step = DEFAULT_SCAN_DEGREE / len(images)  # degree
+                points_3d = []
+                points_2d = []
+                detected_areas = []
+                for num_img, angle in zip(images, count(0, angle_step)):
+                    centered_points, points = self.image_to_points(num_img.image, angle)
+                    import cv2
+                    detected_areas.append(cv2.contourArea(centered_points))
+                    points_2d.append(centered_points)
+                    points_3d.extend(points)
+                points_3d = numpy.array(points_3d)
+                points_3d_unzipped = numpy.array(list(zip(*points_3d)))
+                coefficients = [i/j for i,j in zip(detected_areas, areas)]
+                m = max(coefficients)
+                means.append(m)
+        print(mean(means))
         volume = calculate_volume(points_2d)
         self._view_model.set_volume(volume)
         self._view_model.set_points(points_3d_unzipped)
