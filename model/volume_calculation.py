@@ -6,6 +6,7 @@ import cv2
 
 # 660 pixels = 1.35 mm it equals 489 px / mm
 
+ABSTRACT_PER_MM3 = 59900
 CONTOUR_GAP_DETECTION = 5
 
 def calc_rotation_matrix(axis, degree):
@@ -29,5 +30,4 @@ def calculate_volume(image_points):
     return abstract_to_real_volume(mean(image_areas))
 
 def abstract_to_real_volume(volume):
-    print('IMPLEMENT THE CALCULATION')
-    return volume
+    return volume / 59900
