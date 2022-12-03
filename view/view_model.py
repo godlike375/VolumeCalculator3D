@@ -23,3 +23,6 @@ class ViewModel:
 
     def show_message(self, title, message):
         self._view.show_message(title, message)
+
+    def set_approximation_rate(self, rate):
+        self._model.set_approximation_rate(rate)

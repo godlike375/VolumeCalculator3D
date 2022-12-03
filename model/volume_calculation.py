@@ -27,7 +27,7 @@ def calculate_volume(image_points):
                 ignored_gaps.add(min(i, j))
     for gap in ignored_gaps:
         image_areas.remove(gap)
-    return abstract_to_real_volume(mean(image_areas))
+    return abstract_to_real_volume(mean(image_areas)), len(ignored_gaps)
 
 def abstract_to_real_volume(volume):
-    return volume / 59900
+    return volume / ABSTRACT_PER_MM3

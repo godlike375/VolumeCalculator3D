@@ -1,12 +1,15 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog,
-    QVBoxLayout, QWidget, QLabel, QMessageBox
+    QVBoxLayout, QWidget, QLabel, QMessageBox,
+    QTextEdit, QHBoxLayout
 )
 from matplotlib import pyplot as plt
 from numpy import ndarray
 
 from view.pyplot_qt import Plot3D
 from view.view_model import VOLUME
+
+from model.business_logic import DEFAULT_APPROXIMATION_RATE
 
 
 class MainForm(QMainWindow):
@@ -21,9 +24,20 @@ class MainForm(QMainWindow):
         self.chose_folder.clicked.connect(self.select)
         layout.addWidget(self.chose_folder)
 
+        horiz_layout = QHBoxLayout()
+        layout.addLayout(horiz_layout)
+
         self.volume = QLabel()
         self.set_volume(0)
-        layout.addWidget(self.volume)
+        horiz_layout.addWidget(self.volume)
+
+        self.approximation = QLabel('Аппроксимация точек = ')
+        horiz_layout.addWidget(self.approximation)
+
+        self.approximation_rate = QTextEdit(f'{DEFAULT_APPROXIMATION_RATE}')
+        self.approximation_rate.setFixedHeight(25)
+        self.approximation_rate.textChanged.connect(self.approximation_rate_changed)
+        horiz_layout.addWidget(self.approximation_rate)
 
         self.plot = Plot3D(self, width=15, height=15, dpi=150)
         layout.addWidget(self.plot)
@@ -41,6 +55,11 @@ class MainForm(QMainWindow):
             self._view_model.model_run(folder_dir)
         else:
             self.show_message('Ошибка', 'Необходимо выбрать папку')
+
+    def approximation_rate_changed(self):
+        rate = self.approximation_rate.toPlainText()
+        floated = float(rate)
+        self._view_model.set_approximation_rate(floated)
 
     def clear_plot_and_volume(self):
         self.plot.axes.cla()

@@ -8,10 +8,12 @@ import os
 
 IMAGE_NUMBER = r'_(\d+)\.'
 
+
 @dataclass
 class NumberedImage:
     image: ndarray
     number: int
+
 
 def get_files_with_numbers(dir):
     images = []

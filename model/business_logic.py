@@ -2,7 +2,6 @@ from copy import deepcopy
 from math import radians
 from itertools import count
 
-
 import numpy
 import numpy as np
 from numpy import ndarray
@@ -35,7 +34,12 @@ class Model:
         points_3d = numpy.array(points_3d)
         points_3d_unzipped = numpy.array(list(zip(*points_3d)))
 
-        volume = calculate_volume(points_2d)
+        volume, ignored_gaps = calculate_volume(points_2d)
+        if ignored_gaps > 0:
+            self._view_model.show_message('Предупреждение',
+                                          f'В процессе обработки изображений на {ignored_gaps}'
+                                          f' кадрах не удалость распознать обводку кровоизлияния, поэтому'
+                                          f' результаты работы могут быть менее точными')
         self._view_model.set_volume(volume)
         self._view_model.set_points(points_3d_unzipped)
 
@@ -69,3 +73,7 @@ class Model:
 
     def extract_number(self, image: NumberedImage):
         return image.number
+
+    def set_approximation_rate(self, rate):
+        global DEFAULT_APPROXIMATION_RATE
+        DEFAULT_APPROXIMATION_RATE = rate
