@@ -21,7 +21,7 @@ def main():
         app.exec()
     except Exception as e:
         ViewModel.show_message('Непредвиденная ошибка', str(e))
-        logger.critical(str(e))
+        logger.exception(str(e))
 
 
 if __name__ == '__main__':

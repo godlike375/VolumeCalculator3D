@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import (
     QMainWindow, QPushButton, QFileDialog,
-    QVBoxLayout, QWidget, QLabel, QMessageBox,
+    QVBoxLayout, QWidget, QLabel,
     QTextEdit, QHBoxLayout
 )
 from matplotlib import pyplot as plt
@@ -10,7 +10,9 @@ from view.pyplot_qt import Plot3D
 from view.view_model import VOLUME
 
 from model.business_logic import DEFAULT_APPROXIMATION_RATE
+from view.view_model import ViewModel
 
+from common.logger import logger
 
 class MainForm(QMainWindow):
     def __init__(self, view_model):
@@ -52,9 +54,10 @@ class MainForm(QMainWindow):
 
         if dlg.exec():
             folder_dir = dlg.selectedFiles()[0]
+            logger.debug('selected files')
             self._view_model.model_run(folder_dir)
         else:
-            self.show_message('Ошибка', 'Необходимо выбрать папку')
+            ViewModel.show_message('Ошибка', 'Необходимо выбрать папку')
 
     def approximation_rate_changed(self):
         rate = self.approximation_rate.toPlainText()
