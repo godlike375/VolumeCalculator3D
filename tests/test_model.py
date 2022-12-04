@@ -6,7 +6,7 @@ import cv2
 from unittest.mock import patch, Mock
 from pathlib import Path
 
-from model.volume_calculation import rotate_vector_by_axis
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume
 from model.business_logic import Model
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers
@@ -26,7 +26,7 @@ def test_2d_to_3d():
     assert_array_equal(res, np.array([[0, 1, 0], [0, 0, 1], [0, 1, 1]]))
 
 
-def test(num_regression):
+def test_contours_detection(num_regression):
     test_img = cv2.imread('curve_detection.jpg')
     contours: np.ndarray = detect_contours(test_img, lower_hsv=[1, 0, 0], upper_hsv=[22, 255, 255],
                                            threshold=254, approximation_rate=0.00135)
