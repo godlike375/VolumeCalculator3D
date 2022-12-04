@@ -1,3 +1,5 @@
+from PyQt6.QtWidgets import QMessageBox
+
 VOLUME = 'Объём ='
 
 
@@ -21,8 +23,12 @@ class ViewModel:
     def set_points(self, points):
         self._view.draw_point_cloud(*points)
 
-    def show_message(self, title, message):
-        self._view.show_message(title, message)
+    @staticmethod
+    def show_message(title, text):
+        message = QMessageBox()
+        message.setText(text)
+        message.setWindowTitle(title)
+        message.exec()
 
     def set_approximation_rate(self, rate):
         self._model.set_approximation_rate(rate)

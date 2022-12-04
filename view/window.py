@@ -71,9 +71,3 @@ class MainForm(QMainWindow):
 
     def set_volume(self, volume: float):
         self.volume.setText(f'{VOLUME} {volume}')
-
-    def show_message(self, title, text):
-        message = QMessageBox()
-        message.setText(text)
-        message.setWindowTitle(title)
-        message.exec()
