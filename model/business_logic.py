@@ -8,7 +8,7 @@ from numpy import ndarray
 
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers, NumberedImage
-from model.volume_calculation import rotate_vector_by_axis, calculate_volume
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas
 
 DEFAULT_SCAN_DEGREE = 180
 DEFAULT_APPROXIMATION_RATE = 0.00135
@@ -33,8 +33,8 @@ class Model:
             points_3d.extend(points)
         points_3d = numpy.array(points_3d)
         points_3d_unzipped = numpy.array(list(zip(*points_3d)))
-
-        volume, ignored_gaps = calculate_volume(points_2d)
+        areas = calculate_areas(points_2d)
+        volume, ignored_gaps = calculate_volume(areas)
         if ignored_gaps > 0:
             self._view_model.show_message('Предупреждение',
                                           f'В процессе обработки изображений на {ignored_gaps}'

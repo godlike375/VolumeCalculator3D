@@ -1,15 +1,15 @@
 from math import radians
+from pathlib import Path
+from unittest.mock import patch, Mock
 
+import cv2
 import numpy as np
 from numpy.testing import assert_array_equal
-import cv2
-from unittest.mock import patch, Mock
-from pathlib import Path
 
-from model.volume_calculation import rotate_vector_by_axis, calculate_volume
 from model.business_logic import Model
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume
 
 
 def test_rotate_vector():
@@ -49,3 +49,11 @@ def test_data_interface():
                     assert all(nums_correct)
                 else:
                     assert False
+
+
+def test_calculate_volume():
+    areas = [1, 2, 3, 4, 5]
+    assert calculate_volume(areas) == (0.00011018363939899833, 0)
+
+    areas = [0.5, 2.5, 3, 4, 5]
+    assert calculate_volume(areas) == (0.00013313856427378965, 1)
