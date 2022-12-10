@@ -24,14 +24,14 @@ class MainForm(QMainWindow):
         self.chose_folder = QPushButton('Выбрать папку со снимками')
         self.chose_folder.clicked.connect(self.clear_plot_and_volume)
         self.chose_folder.clicked.connect(self.select)
-        layout.addWidget(self.chose_folder)
 
         horiz_layout = QHBoxLayout()
         layout.addLayout(horiz_layout)
 
         self.volume = QLabel()
         self.set_volume(0)
-        horiz_layout.addWidget(self.volume)
+        horiz_layout.addWidget(self.chose_folder)
+
 
         self.approximation = QLabel('Аппроксимация точек = ')
         horiz_layout.addWidget(self.approximation)
@@ -40,7 +40,7 @@ class MainForm(QMainWindow):
         self.approximation_rate.setFixedHeight(25)
         self.approximation_rate.textChanged.connect(self.approximation_rate_changed)
         horiz_layout.addWidget(self.approximation_rate)
-
+        horiz_layout.addWidget(self.volume)
         self.plot = Plot3D(self, width=15, height=15, dpi=160)
         layout.addWidget(self.plot)
 
@@ -67,6 +67,7 @@ class MainForm(QMainWindow):
     def clear_plot_and_volume(self):
         self.plot.axes.cla()
         self.set_volume(0)
+        self.plot.clear_axes_labels()
 
     def draw_point_cloud(self, xs: ndarray, ys: ndarray, zs: ndarray):
         colormap = plt.get_cmap("turbo")
@@ -74,4 +75,4 @@ class MainForm(QMainWindow):
         self.plot.clear_axes_labels()
 
     def set_volume(self, volume: float):
-        self.volume.setText(f'{VOLUME} {volume}')
+        self.volume.setText(f'{VOLUME} {volume} мл')

@@ -7,8 +7,8 @@ from scipy.linalg import expm, norm
 # 660 pixels = 1.35 mm it equals 489 px / mm
 
 ABSTRACT_PER_MM3 = 59900
-CONTOUR_GAP_DETECTION = 5
-BLOOD_TO_DRUG_VOLUME = 2.2
+CONTOUR_GAP_DETECTION = 28
+BLOOD_TO_DRUG_VOLUME = 3
 
 
 def calc_rotation_matrix(axis, degree):
@@ -34,4 +34,4 @@ def calculate_volume(image_areas):
 
 
 def abstract_to_real_volume(volume):
-    return volume / ABSTRACT_PER_MM3 * BLOOD_TO_DRUG_VOLUME
+    return round(volume * BLOOD_TO_DRUG_VOLUME / ABSTRACT_PER_MM3, 3)

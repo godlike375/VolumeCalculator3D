@@ -1,6 +1,6 @@
 from PyQt6.QtWidgets import QMessageBox
 
-VOLUME = 'Объём ='
+VOLUME = 'Объём лекарства ='
 
 
 class ViewModel:

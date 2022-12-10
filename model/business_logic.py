@@ -1,5 +1,5 @@
 from copy import deepcopy
-from math import radians
+from math import radians, tan
 from itertools import count
 
 import numpy
@@ -8,10 +8,11 @@ from numpy import ndarray
 
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers, NumberedImage
-from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas, ABSTRACT_PER_MM3
 
 DEFAULT_SCAN_DEGREE = 180
-DEFAULT_APPROXIMATION_RATE = 0.00135
+DEFAULT_APPROXIMATION_RATE = 0.0013
+VOLUME_FROM_CENTER_COEFFICIENT = tan(radians(10))
 
 
 class Model:
@@ -34,7 +35,11 @@ class Model:
         points_3d = numpy.array(points_3d)
         points_3d_unzipped = numpy.array(list(zip(*points_3d)))
         areas = calculate_areas(points_2d)
-        volume, ignored_gaps = calculate_volume(areas)
+        areas_dist_from_center = [self.find_impact_to_volume(i) for i in points_2d]
+        corrected_areas = [i*j for i, j in zip(areas, areas_dist_from_center)]
+        # чем дальше от центра контур гематомы, тем больший вклад в объём он вносит
+        # т.к. прямые срезов всё больше расходятся друг от друга с расстоянием
+        volume, ignored_gaps = calculate_volume(corrected_areas)
         if ignored_gaps > 0:
             self._view_model.show_message('Предупреждение',
                                           f'В процессе обработки изображений на {ignored_gaps}'
@@ -59,6 +64,14 @@ class Model:
         points[:, 0] -= dx
         points[:, 1] -= dy
         return points
+
+    @staticmethod
+    def find_impact_to_volume(object_points: ndarray):
+        most_right = np.max(object_points[:, 0])
+        most_left = np.min(object_points[:, 0])
+        object_center = (most_right + most_left) // 2
+        return abs(object_center) * VOLUME_FROM_CENTER_COEFFICIENT
+
 
     @staticmethod
     def new_rotated_axis(points: ndarray, angle: float, axis=None):
