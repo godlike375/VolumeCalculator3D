@@ -13,6 +13,8 @@ from model.volume_calculation import rotate_vector_by_axis, calculate_volume, ca
 DEFAULT_SCAN_DEGREE = 180
 DEFAULT_APPROXIMATION_RATE = 0.0013
 VOLUME_FROM_CENTER_COEFFICIENT = tan(radians(10))
+IMAGES_COUNT = 18
+INVALID_RESULT_WARNING = 'Конечный результат может не соответствовать действительности'
 
 
 class Model:
@@ -21,6 +23,15 @@ class Model:
 
     def run(self, dir: str):
         images = get_files_with_numbers(dir)
+        numbers = [i.number for i in images]
+        unique_numbers = set(numbers)
+        if len(numbers) != IMAGES_COUNT:
+            self._view_model.show_message('Предупреждение', f'Изображений меньше 18. {INVALID_RESULT_WARNING}')
+        if len(numbers) != len(unique_numbers):
+            self._view_model.show_message('Предупреждение', f'Найдены повторяющиеся номера файлов. {INVALID_RESULT_WARNING}')
+        if not all([i in range(1, IMAGES_COUNT+1) for i in numbers]):
+            self._view_model.show_message('Предупреждение',
+                                          f'Найдены некорректные номера файлов (0>n>18). {INVALID_RESULT_WARNING}')
         images.sort(key=self.extract_number)
         if not len(images):
             self._view_model.show_message('Ошибка', 'Указанная папка пустая')
