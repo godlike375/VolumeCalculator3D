@@ -15,7 +15,7 @@ class ViewModel:
         self._view = view
 
     def model_run(self, dir: str):
-        self._model.run(dir)
+        self._model.get_volume_by_images(dir)
 
     def set_volume(self, volume):
         self._view.set_volume(volume)

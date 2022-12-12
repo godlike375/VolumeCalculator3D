@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 from numpy.testing import assert_array_equal
 
-from model.business_logic import Model
+from model.business_logic import Model, new_rotated_axis
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers
 from model.volume_calculation import rotate_vector_by_axis, calculate_volume
@@ -22,7 +22,7 @@ def test_rotate_vector():
 
 def test_2d_to_3d():
     points = np.array([[1, 0], [0, 1], [1, 1]])
-    res = Model.new_rotated_axis(points, radians(90))
+    res = new_rotated_axis(points, radians(90))
     assert_array_equal(res, np.array([[0, 1, 0], [0, 0, 1], [0, 1, 1]]))
 
 
@@ -52,8 +52,8 @@ def test_data_interface():
 
 
 def test_calculate_volume():
-    areas = [1, 2, 3, 4, 5]
-    assert calculate_volume(areas) == (0.00011018363939899833, 0)
+    areas = [1000, 2000, 3000, 4000, 5000]
+    assert calculate_volume(areas) == (0.15, 0)
 
-    areas = [0.5, 2.5, 3, 4, 5]
-    assert calculate_volume(areas) == (0.00013313856427378965, 1)
+    areas = [50, 2500, 3000, 4000, 5000]
+    assert calculate_volume(areas) == (0.182, 1)
