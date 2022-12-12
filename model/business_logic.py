@@ -7,7 +7,7 @@ from numpy import ndarray
 
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers, NumberedImage
-from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas, ABSTRACT_PER_MM3
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas
 from common.logger import logger
 
 DEFAULT_SCAN_DEGREE = 180
@@ -93,8 +93,6 @@ class Model:
             areas = np.array(calculate_areas(points_2d))
             dist_from_center_coefficients = np.array([find_impact_to_volume(i) for i in points_2d])
             corrected_areas = areas * dist_from_center_coefficients
-            # чем дальше от центра контур гематомы, тем больший вклад в объём он вносит
-            # т.к. прямые срезов всё больше расходятся друг от друга с расстоянием
             volume, ignored_gaps = calculate_volume(corrected_areas.tolist())
             if ignored_gaps:
                 self._view_model.show_message \

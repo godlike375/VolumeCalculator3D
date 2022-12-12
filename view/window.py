@@ -21,7 +21,7 @@ class MainForm(QMainWindow):
         self.setWindowTitle('3D volume calculator')
         layout = QVBoxLayout()
 
-        self.chose_folder = QPushButton('Выбрать папку со снимками')
+        self.chose_folder = QPushButton('Выбрать папку с изображениями')
         self.chose_folder.clicked.connect(self.clear_plot_and_volume)
         self.chose_folder.clicked.connect(self.select)
 
@@ -33,7 +33,7 @@ class MainForm(QMainWindow):
         horiz_layout.addWidget(self.chose_folder)
 
 
-        self.approximation = QLabel('Аппроксимация точек = ')
+        self.approximation = QLabel('Коэффициент аппроксимации = ')
         horiz_layout.addWidget(self.approximation)
 
         self.approximation_rate = QTextEdit(f'{Model.DEFAULT_APPROXIMATION_RATE}')
