@@ -1,4 +1,8 @@
-VOLUME = 'Объём ='
+from PyQt6.QtWidgets import QMessageBox
+
+from common.settings import Settings
+
+VOLUME = 'Объём лекарства ='
 
 
 class ViewModel:
@@ -13,7 +17,7 @@ class ViewModel:
         self._view = view
 
     def model_run(self, dir: str):
-        self._model.run(dir)
+        self._model.get_volume_by_images(dir)
 
     def set_volume(self, volume):
         self._view.set_volume(volume)
@@ -21,5 +25,12 @@ class ViewModel:
     def set_points(self, points):
         self._view.draw_point_cloud(*points)
 
-    def show_message(self, title, message):
-        self._view.show_message(title, message)
+    @staticmethod
+    def show_message(title, text):
+        message = QMessageBox()
+        message.setText(text)
+        message.setWindowTitle(title)
+        message.exec()
+
+    def set_approximation_rate(self, rate):
+        Settings.set_approximation_rate(rate)

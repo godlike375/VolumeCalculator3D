@@ -1,15 +1,15 @@
 from math import radians
+from pathlib import Path
+from unittest.mock import patch, Mock
 
+import cv2
 import numpy as np
 from numpy.testing import assert_array_equal
-import cv2
-from unittest.mock import patch, Mock
-from pathlib import Path
 
-from model.volume_calculation import rotate_vector_by_axis
-from model.business_logic import Model
+from model.business_logic import Model, new_rotated_axis
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers
+from model.volume_calculation import rotate_vector_by_axis, calculate_volume
 
 
 def test_rotate_vector():
@@ -19,17 +19,19 @@ def test_rotate_vector():
     for vec, ax, res in zip(vectors, axises, results):
         assert_array_equal(res, rotate_vector_by_axis(vec, ax, radians(90)))
 
+
 def test_2d_to_3d():
     points = np.array([[1, 0], [0, 1], [1, 1]])
-    res = Model.new_rotated_axis(points, radians(90))
+    res = new_rotated_axis(points, radians(90))
     assert_array_equal(res, np.array([[0, 1, 0], [0, 0, 1], [0, 1, 1]]))
 
 
-def test(num_regression):
+def test_contours_detection(num_regression):
     test_img = cv2.imread('curve_detection.jpg')
-    contours: np.ndarray = detect_contours(test_img,  lower_hsv=[1, 0, 0], upper_hsv=[22, 255, 255],
-                                         threshold=254, approximation_rate=0.00135)
+    contours: np.ndarray = detect_contours(test_img, lower_hsv=[1, 0, 0], upper_hsv=[22, 255, 255],
+                                           threshold=254, approximation_rate=0.00135)
     num_regression.check({'mock_dict': contours.ravel()})
+
 
 def test_data_interface():
     with patch.object(Path, 'iterdir') as mock_iterdir:
@@ -47,3 +49,11 @@ def test_data_interface():
                     assert all(nums_correct)
                 else:
                     assert False
+
+
+def test_calculate_volume():
+    areas = [1000, 2000, 3000, 4000, 5000]
+    assert calculate_volume(areas) == (0.15, 0)
+
+    areas = [50, 2500, 3000, 4000, 5000]
+    assert calculate_volume(areas) == (0.182, 1)
