@@ -1,5 +1,7 @@
 from PyQt6.QtWidgets import QMessageBox
 
+from common.settings import Settings
+
 VOLUME = 'Объём лекарства ='
 
 
@@ -31,4 +33,4 @@ class ViewModel:
         message.exec()
 
     def set_approximation_rate(self, rate):
-        self._model.set_approximation_rate(rate)
+        Settings.set_approximation_rate(rate)

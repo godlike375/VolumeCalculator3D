@@ -1,10 +1,12 @@
 from pathlib import Path
 from dataclasses import dataclass
+import re
+import os
 
 from numpy import ndarray
 import cv2
-import re
-import os
+
+from common.logger import logger
 
 IMAGE_NUMBER = r'_(\d+)\.'
 
@@ -19,9 +21,12 @@ def get_files_with_numbers(dir):
     images = []
     old_dir = Path.cwd()
     os.chdir(dir)
+    logger.debug(f'chosen directory: {dir}')
+    logger.debug('filenames:')
     for file in Path.iterdir(Path(dir)):
         image, number = read_image(file.name)
         if image is not None:
+            logger.debug(f'{file.name}, number: {number}')
             images.append(NumberedImage(image, number))
     os.chdir(old_dir)
     return images

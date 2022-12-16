@@ -1,14 +1,15 @@
-from math import radians, tan
 from itertools import count
+from math import radians, tan
 
 import numpy
 import numpy as np
 from numpy import ndarray
 
+from common.logger import logger
 from model.curve_detection import detect_contours
 from model.data_interface import get_files_with_numbers, NumberedImage
 from model.volume_calculation import rotate_vector_by_axis, calculate_volume, calculate_areas
-from common.logger import logger
+from common.settings import Settings
 
 DEFAULT_SCAN_DEGREE = 180
 VOLUME_FROM_CENTER_COEFFICIENT = tan(radians(10))
@@ -49,7 +50,7 @@ def set_points_center(img: ndarray, points: ndarray):
 
 def image_to_points(image: ndarray, angle: float):
     contour_points = detect_contours(image, lower_hsv=[1, 0, 0], upper_hsv=[64, 255, 255],
-                                     threshold=254, approximation_rate=Model.DEFAULT_APPROXIMATION_RATE)
+                                     threshold=254, approximation_rate=Settings.DEFAULT_APPROXIMATION_RATE)
     contour_points = contour_points.reshape((contour_points.shape[0], contour_points.shape[2]))
     centered_points = set_points_center(image, contour_points)
     points_3d = new_rotated_axis(centered_points, radians(angle))
@@ -73,7 +74,7 @@ def find_impact_to_volume(object_points: ndarray):
 
 
 class Model:
-    DEFAULT_APPROXIMATION_RATE = 0.0013
+
     def __init__(self, view_model):
         self._view_model = view_model
 
@@ -91,10 +92,15 @@ class Model:
                 points_3d.extend(points)
 
             areas = np.array(calculate_areas(points_2d))
+            logger.debug(f'areas: {areas}')
             dist_from_center_coefficients = np.array([find_impact_to_volume(i) for i in points_2d])
+            logger.debug(f'coefficients: {dist_from_center_coefficients}')
             corrected_areas = areas * dist_from_center_coefficients
+            logger.debug(f'corrected areas: {corrected_areas}')
             volume, ignored_gaps = calculate_volume(corrected_areas.tolist())
+            logger.debug(f'volume: {volume}')
             if ignored_gaps:
+                logger.warning(f'ignored gaps: {ignored_gaps}')
                 self._view_model.show_message \
                     ('Предупреждение',
                      f'В процессе обработки изображений на {ignored_gaps} '
@@ -106,7 +112,7 @@ class Model:
             points_3d_unzipped = numpy.array(list(zip(*points_3d)))
             self._view_model.set_points(points_3d_unzipped)
         except FolderEmptyError:
-            pass
+            logger.warning('folder is empty')
         except Exception as e:
             self._view_model.show_message('Непредвиденная ошибка', repr(e))
             logger.exception(e)
@@ -118,14 +124,16 @@ class Model:
         numbers = [i.number for i in images]
         unique_numbers = set(numbers)
         if len(numbers) != IMAGES_COUNT:
-            self._view_model.show_message('Предупреждение', f'Изображений меньше 18. {INVALID_RESULT_WARNING}')
+            self._view_model.show_message('Предупреждение', f'Обнаружено {len(numbers)} изображений'
+                                                            f' вместо ожидаемых {IMAGES_COUNT}. {INVALID_RESULT_WARNING}'
+                                         )
+            logger.warning(f'folder contains {len(numbers)} images that is not equal {IMAGES_COUNT}')
         if len(numbers) != len(unique_numbers):
             self._view_model.show_message('Предупреждение',
-                                          f'Найдены повторяющиеся номера файлов. {INVALID_RESULT_WARNING}')
+                                          f'Обнаружены повторяющиеся номера файлов. {INVALID_RESULT_WARNING}')
+            logger.warning(f'found duplicate filenames')
         if not all([i in range(1, IMAGES_COUNT + 1) for i in numbers]):
+            logger.warning(f'found incorrect file numbers (0>n>18)')
             self._view_model.show_message('Предупреждение',
-                                          f'Найдены некорректные номера файлов (0>n>18). {INVALID_RESULT_WARNING}')
+                                          f'Обнаружены некорректные номера файлов (0>n>18). {INVALID_RESULT_WARNING}')
 
-    @classmethod
-    def set_approximation_rate(cls, rate):
-        cls.DEFAULT_APPROXIMATION_RATE = rate

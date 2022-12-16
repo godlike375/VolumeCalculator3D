@@ -9,7 +9,7 @@ from numpy import ndarray
 from view.pyplot_qt import Plot3D
 from view.view_model import VOLUME
 
-from model.business_logic import Model
+from common.settings import Settings
 from view.view_model import ViewModel
 
 from common.logger import logger
@@ -36,7 +36,7 @@ class MainForm(QMainWindow):
         self.approximation = QLabel('Коэффициент аппроксимации = ')
         horiz_layout.addWidget(self.approximation)
 
-        self.approximation_rate = QTextEdit(f'{Model.DEFAULT_APPROXIMATION_RATE}')
+        self.approximation_rate = QTextEdit(f'{Settings.DEFAULT_APPROXIMATION_RATE}')
         self.approximation_rate.setFixedHeight(25)
         self.approximation_rate.textChanged.connect(self.approximation_rate_changed)
         horiz_layout.addWidget(self.approximation_rate)
