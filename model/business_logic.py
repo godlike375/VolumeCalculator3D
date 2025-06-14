@@ -17,8 +17,7 @@ IMAGES_COUNT = 18
 INVALID_RESULT_WARNING = 'Конечный результат может не соответствовать действительности'
 
 
-class FolderEmptyError(Exception):
-    pass
+class FolderEmptyError(Exception):...
 
 
 def extract_number(image: NumberedImage):
