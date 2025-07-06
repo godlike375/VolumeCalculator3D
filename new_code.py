@@ -1,12 +1,15 @@
 import logging
 from pathlib import Path
+import dataclasses
+from typing import List
 
 import cv2
 import numpy as np
 import pyvista as pv
 from PyQt6 import QtCore, QtGui, QtWidgets
-from PyQt6.QtGui import QAction
-from PyQt6.QtWidgets import QApplication, QMessageBox
+from PyQt6.QtGui import QAction, QImage, QPixmap, QPen, QBrush, QColor
+from PyQt6.QtWidgets import QApplication, QMessageBox, QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QLineEdit, QLabel, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem, QGraphicsPathItem, QGraphicsEllipseItem
+from PyQt6.QtCore import Qt, QPointF, QRectF
 from pyvistaqt import QtInteractor
 
 # === КОНСТАНТЫ ЛОГИРОВАНИЯ ===
@@ -15,11 +18,11 @@ LOG_FORMAT = '%(asctime)s - %(levelname)s - %(message)s'
 LOG_LEVEL = logging.INFO
 
 # === КОНСТАНТЫ ОБРАБОТКИ ИЗОБРАЖЕНИЙ ===
-ROI_PERCENTAGE = 0.05
+ROI_PERCENTAGE = 0.025
 MIN_CONTOUR_AREA = 4
 CONFIDENCE_THRESHOLD = 0.7
 TARGET_NORM_SIZE = (20, 32)  # (ширина, высота)
-MORPH_KERNEL_MAX_SIZE = 50
+MORPH_KERNEL_MAX_SIZE = 1
 TEMPLATES_DIR = "templates"
 
 # === КОНСТАНТЫ МОДЕЛИРОВАНИЯ И ВЫЧИСЛЕНИЯ ОБЪЕМА ===
@@ -34,7 +37,9 @@ VOLUME_DIVIDER = 1000.0
 TARGET_MIN_ANGLE_STEP = 4.5 # degrees
 
 # Настройка логирования
-logging.basicConfig(filename=LOG_FILENAME, level=LOG_LEVEL, format=LOG_FORMAT)
+# Для совместимости с Python < 3.9, открываем файл явно с utf-8 кодировкой
+log_file_handler = logging.FileHandler(LOG_FILENAME, mode='a', encoding='utf-8')
+logging.basicConfig(handlers=[log_file_handler], level=LOG_LEVEL, format=LOG_FORMAT) # Removed encoding argument, added handlers
 
 def show_error(message: str, level: str = 'critical'):
     """Универсальная функция для отображения ошибок и логирования."""
@@ -42,10 +47,10 @@ def show_error(message: str, level: str = 'critical'):
         'critical': (logging.error, QMessageBox.critical, "CRITICAL ERROR"),
         'warning': (logging.warning, QMessageBox.warning, "WARNING")
     }
-    
+
     log_func, dialog_func, console_prefix = level_actions[level]
     log_func(message)
-    
+
     app = QApplication.instance()
     if app is not None:
         dialog_func(None, "Ошибка" if level == 'critical' else "Внимание", message)
@@ -77,7 +82,7 @@ class DataReader:
     def _load_digit_templates_from_templates(self):
         """Загружает шаблоны для цифр 0-9 из файлов."""
         self.digit_templates = {}
-        
+
         # Загружаем шаблоны для всех цифр 0-9
         for digit in range(10):
             template_path = self.templates_dir / f"{digit}.png"
@@ -90,7 +95,7 @@ class DataReader:
             normalized_template = self._extract_and_normalize_number(template_gray, bbox)
             if normalized_template is not None:
                 self.digit_templates[digit] = normalized_template
-        
+
         if not self.digit_templates:
             show_error("Не удалось загрузить ни один шаблон цифры")
             self.digit_templates = None
@@ -116,7 +121,7 @@ class DataReader:
             all_points = np.vstack(valid_contours).squeeze()
             min_x, min_y = all_points.min(axis=0)
             max_x, max_y = all_points.max(axis=0)
-            
+
             return (int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
         except Exception as e:
             show_error(f"Ошибка поиска контура числа: {str(e)}")
@@ -214,36 +219,50 @@ class DataReader:
         try:
             self.images = []
             self.scan_numbers = []
+            self.image_files = [] # Store file paths here
             seen_numbers = set()
             image_shape = None
-            image_files = []
+            all_image_paths = []
             for ext in ['*.png', '*.jpg', '*.jpeg', '*.bmp']:
-                image_files.extend(self.directory.glob(ext))
-            for file in image_files:
-                img_bgr = self._imread_unicode(file)
+                all_image_paths.extend(self.directory.glob(ext))
+
+            # Sort files by name to ensure consistent order (e.g., scan_1.png, scan_2.png)
+            all_image_paths = sorted(all_image_paths, key=lambda p: p.name)
+
+            for file_path in all_image_paths:
+                img_bgr = self._imread_unicode(file_path)
                 if img_bgr is None:
                     continue
                 roi_bgr, roi_gray = self._find_number_roi(img_bgr)
                 number = self._extract_number(roi_gray)
                 if number is None or not (SCAN_NUMBER_MIN <= number <= SCAN_NUMBER_MAX):
-                    show_error(f"Неверный номер скана в файле: {file}", level='warning')
+                    show_error(f"Неверный номер скана в файле: {file_path.name}", level='warning')
                     continue
                 if number in seen_numbers:
-                    show_error(f"Обнаружен дубликат номера скана {number} в файле: {file}", level='warning')
+                    show_error(f"Обнаружен дубликат номера скана {number} в файле: {file_path.name}", level='warning')
                     continue
                 if img_bgr is None:
                     continue
                 if image_shape is None:
                     image_shape = img_bgr.shape
                 elif img_bgr.shape != image_shape:
-                    show_error(f"Обнаружено изображение с другим разрешением: {file} (ожидалось {image_shape}, получено {img_bgr.shape})")
-                    raise ValueError(f"Обнаружено изображение с другим разрешением: {file} (ожидалось {image_shape}, получено {img_bgr.shape})")
+                    show_error(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})")
+                    raise ValueError(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})")
                 self.images.append(img_bgr)
                 self.scan_numbers.append(number)
+                self.image_files.append(file_path) # Store the path
                 seen_numbers.add(number)
-            missing = set(range(min(self.scan_numbers), max(self.scan_numbers) + 1)) - set(self.scan_numbers)
+
+            # After collecting all valid images, sort them by scan number
+            # Create a list of tuples (scan_number, image, file_path) and sort it
+            sorted_data = sorted(zip(self.scan_numbers, self.images, self.image_files))
+            self.scan_numbers = [item[0] for item in sorted_data]
+            self.images = [item[1] for item in sorted_data]
+            self.image_files = [item[2] for item in sorted_data]
+
+            missing = set(range(min(self.scan_numbers), max(self.scan_numbers) + 1)) - set(self.scan_numbers) if self.scan_numbers else set()
             if missing:
-                show_error(f"Отсутствуют сканы: {sorted(missing)}", level='warning')
+                show_error(f"Отсутствуют сканы: {sorted(list(missing))}", level='warning')
             if not self.images:
                 show_error("Не найдено ни одного валидного изображения")
                 raise ValueError("Не найдено ни одного валидного изображения")
@@ -255,7 +274,7 @@ class DataReader:
 
 
 class ImageProcessor:
-    def __init__(self, saturation_threshold=0.0):
+    def __init__(self, saturation_threshold=0.1225):
         self.saturation_threshold = saturation_threshold
     @staticmethod
     def process_image(img, approximation_rate=CONTOUR_APPROX_RATE, saturation_threshold=0.0):
@@ -269,7 +288,7 @@ class ImageProcessor:
                 show_error("Размер ядра морфологии слишком мал")
                 return None
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
                 contour = max(contours, key=cv2.contourArea)
@@ -328,17 +347,17 @@ class ModelBuilder:
             # Determine the current average angular step between existing contours
             # Assuming existing_angles are sorted and represent a full circle.
             current_avg_angle_step = 360.0 / len(existing_angles)
-            
+
             # Calculate the new angular step (halved)
             new_angular_step = current_avg_angle_step / 2.0
-            
+
             # Determine the total number of new angles for a full circle
             total_new_angles_count = int(round(360.0 / new_angular_step))
-            
+
             # Generate the list of all target angles for the full circle
             # Use linspace to ensure even distribution and avoid floating point issues near 360
             new_full_angles = np.linspace(0, 360, total_new_angles_count, endpoint=False) # Exclude 360 to avoid duplicate 0/360
-            
+
             # Create a new list for contours at the new angles, initialized with None
             new_all_contours = [None] * total_new_angles_count
 
@@ -348,7 +367,7 @@ class ModelBuilder:
                 # Calculate the expected index in new_full_angles
                 expected_index = int(round(existing_angle / new_angular_step))
                 expected_index = expected_index % total_new_angles_count # Ensure it wraps around for 360/0
-                
+
                 # Check for collision (should not happen if initial angles are perfectly spaced)
                 if new_all_contours[expected_index] is not None:
                     logging.warning(f"Collision detected at index {expected_index} ({new_full_angles[expected_index]:.2f} deg). Overwriting existing contour from {existing_angle:.2f}.")
@@ -374,7 +393,7 @@ class ModelBuilder:
                         if new_all_contours[k] is not None:
                             next_idx = k
                             break
-                    
+
                     if prev_idx is not None and next_idx is not None and prev_idx != next_idx:
                         c1 = new_all_contours[prev_idx]
                         c2 = new_all_contours[next_idx]
@@ -389,14 +408,14 @@ class ModelBuilder:
                             angle2 += 360.0
                             if target_angle < angle1:
                                 target_angle += 360.0
-                        
+
                         if abs(angle2 - angle1) < 1e-9: # Prevent division by zero if angles are too close
                             logging.warning(f"Interpolation skipped: angles too close for index {i}. Using previous contour as fallback.")
                             interp_contour = c1 # Fallback to a valid contour
                         else:
                             t = (target_angle - angle1) / (angle2 - angle1)
                             interp_contour = self._interpolate_contour(c1, c2, t)
-                        
+
                         final_interpolated_contours.append(interp_contour)
                         final_interpolated_angles.append(new_full_angles[i])
                     else:
@@ -467,7 +486,7 @@ class ModelBuilder:
             if not contours or not scan_numbers:
                 show_error("Нет валидных контуров или номеров сканов")
                 raise ValueError("Нет валидных сканов для вычисления углов")
-            
+
             # Вычисляем углы если не заданы
             if angles is None:
                 N = len(scan_numbers)
@@ -485,7 +504,7 @@ class ModelBuilder:
             # Интерполяция контуров
             current_contours = contours[:]
             current_angles = initial_angles[:]
-            
+
             if len(current_angles) > 1:
                 current_effective_angle_step = sorted(current_angles)[1] - sorted(current_angles)[0]
             else:
@@ -498,20 +517,20 @@ class ModelBuilder:
                 logging.info(f"Interpolation iteration {interpolation_iteration}: Current effective angle step {current_effective_angle_step:.2f} degrees. Target: {TARGET_MIN_ANGLE_STEP:.2f} degrees.")
 
                 new_contours, new_angles = self._perform_interpolation_step(current_contours, current_angles)
-                
+
                 if len(new_contours) == len(current_contours):
                     logging.info("Interpolation step did not increase contour density. Stopping interpolation.")
                     break
 
                 current_contours = new_contours
                 current_angles = new_angles
-                
+
                 if len(current_angles) > 1:
                     current_effective_angle_step = sorted(current_angles)[1] - sorted(current_angles)[0]
                 else:
                     logging.warning("Only one contour remains after interpolation. Stopping.")
                     break
-                
+
                 if interpolation_iteration > 15:
                     logging.warning("Too many interpolation iterations, potential infinite loop detected. Stopping.")
                     break
@@ -524,7 +543,7 @@ class ModelBuilder:
             # Создание 3D точек
             if center is None:
                 center = (self.IMAGE_WIDTH // 2, self.IMAGE_HEIGHT // 2)
-            
+
             points_list = []
             for i, contour in enumerate(contours):
                 angle_rad = angles[i] * np.pi / 180
@@ -532,22 +551,22 @@ class ModelBuilder:
                     x, y = point[0]
                     x_physical = (x - center[0]) / self.scale_x
                     y_physical = (center[1] - y) / self.scale_y
-                    
+
                     x_3d = x_physical * np.cos(angle_rad)
                     y_3d = y_physical
                     z_3d = x_physical * np.sin(angle_rad)
-                    
+
                     points_list.append([x_3d, y_3d, z_3d])
-            
+
             points = np.array(points_list)
             unique_points = np.unique(points, axis=0)
             logging.info(f"Всего точек: {points.shape[0]}, уникальных: {unique_points.shape[0]}")
             if points.shape[0] < 4:
                 show_error(f"Недостаточно точек для триангуляции: {points.shape[0]}")
                 raise ValueError(f"Недостаточно точек для триангуляции: {points.shape[0]}")
-            
+
             self.points = points
-            
+
             # Создание 3D модели
             current_delaunay_alpha = delaunay_alpha if delaunay_alpha is not None else DELAUNAY_ALPHA
             cloud = pv.PolyData(points)
@@ -557,10 +576,217 @@ class ModelBuilder:
             self.mesh = surf
             self.volume = surf.volume
             return surf
-            
+
         except Exception as e:
             show_error(f"Ошибка построения модели: {str(e)}")
             raise
+
+
+class DebugViewer(QtWidgets.QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Отладочный просмотрщик изображений")
+        self.setGeometry(200, 200, 1000, 700)
+        
+        # Данные для отображения
+        self.images = []
+        self.scan_numbers = []
+        self.contours = []
+        self.image_files = []
+        self.current_index = 0
+        
+        # Настройка UI
+        self.init_ui()
+        
+    def init_ui(self):
+        """Инициализация пользовательского интерфейса."""
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Информационная панель
+        info_layout = QtWidgets.QHBoxLayout()
+        
+        self.info_label = QtWidgets.QLabel("Нет данных")
+        self.info_label.setStyleSheet("font-size: 14px; font-weight: bold; color: blue;")
+        info_layout.addWidget(self.info_label)
+        
+        # Кнопки навигации
+        nav_layout = QtWidgets.QHBoxLayout()
+        
+        self.prev_button = QtWidgets.QPushButton("← Предыдущее")
+        self.prev_button.clicked.connect(self.show_previous)
+        self.prev_button.setEnabled(False)
+        nav_layout.addWidget(self.prev_button)
+        
+        self.next_button = QtWidgets.QPushButton("Следующее →")
+        self.next_button.clicked.connect(self.show_next)
+        self.next_button.setEnabled(False)
+        nav_layout.addWidget(self.next_button)
+        
+        info_layout.addLayout(nav_layout)
+        layout.addLayout(info_layout)
+        
+        # Графическая сцена для отображения изображения
+        self.scene = QGraphicsScene()
+        self.view = QGraphicsView(self.scene)
+        self.view.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        self.view.setRenderHint(QtGui.QPainter.RenderHint.SmoothPixmapTransform)
+        self.view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        self.view.setTransformationAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        self.view.setResizeAnchor(QGraphicsView.ViewportAnchor.AnchorUnderMouse)
+        layout.addWidget(self.view)
+        
+        # Панель с дополнительной информацией
+        details_layout = QtWidgets.QHBoxLayout()
+        
+        self.details_label = QtWidgets.QLabel("Детали распознавания:")
+        self.details_label.setStyleSheet("font-size: 12px;")
+        details_layout.addWidget(self.details_label)
+        
+        layout.addLayout(details_layout)
+        
+        # Подсказки для пользователя
+        help_layout = QtWidgets.QHBoxLayout()
+        
+        help_text = ("Подсказки: ←/→ навигация, колесико мыши - масштаб, 0 - сброс масштаба, "
+                    "Esc - закрыть, перетаскивание мышью - перемещение")
+        help_label = QtWidgets.QLabel(help_text)
+        help_label.setStyleSheet("font-size: 10px; color: gray; font-style: italic;")
+        help_layout.addWidget(help_label)
+        
+        layout.addLayout(help_layout)
+        
+    def set_data(self, images, scan_numbers, contours, image_files):
+        """Устанавливает данные для отображения."""
+        self.images = images
+        self.scan_numbers = scan_numbers
+        self.contours = contours
+        self.image_files = image_files
+        self.current_index = 0
+        
+        if self.images:
+            self.update_navigation_buttons()
+            self.show_current_image()
+        else:
+            self.info_label.setText("Нет данных для отображения")
+            
+    def update_navigation_buttons(self):
+        """Обновляет состояние кнопок навигации."""
+        self.prev_button.setEnabled(self.current_index > 0)
+        self.next_button.setEnabled(self.current_index < len(self.images) - 1)
+        
+    def show_current_image(self):
+        """Отображает текущее изображение с контуром и информацией."""
+        if not self.images or self.current_index >= len(self.images):
+            return
+            
+        # Получаем данные текущего изображения
+        img = self.images[self.current_index]
+        scan_number = self.scan_numbers[self.current_index] if self.current_index < len(self.scan_numbers) else "N/A"
+        contour = self.contours[self.current_index] if self.current_index < len(self.contours) else None
+        file_name = self.image_files[self.current_index] if self.current_index < len(self.image_files) else "unknown"
+        
+        # Создаем копию изображения для рисования
+        display_img = img.copy()
+        
+        # Рисуем ROI (область интереса) - левый верхний угол
+        h, w = img.shape[:2]
+        roi_h = int(h * 0.2)
+        roi_w = int(w * 0.2)
+        cv2.rectangle(display_img, (0, 0), (roi_w, roi_h), (0, 255, 255), 2)
+        cv2.putText(display_img, "ROI", (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # Рисуем контур если есть
+        if contour is not None:
+            cv2.drawContours(display_img, [contour], -1, (0, 255, 0), 2)
+            
+        # Конвертируем в RGB для Qt
+        display_img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
+        
+        # Создаем QPixmap
+        h, w, ch = display_img_rgb.shape
+        bytes_per_line = ch * w
+        qimg = QtGui.QImage(display_img_rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+        pixmap = QtGui.QPixmap.fromImage(qimg)
+        
+        # Очищаем сцену и добавляем новое изображение
+        self.scene.clear()
+        self.scene.addPixmap(pixmap)
+        self.view.setSceneRect(QRectF(pixmap.rect()))
+        self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        
+        # Обновляем информацию
+        self.info_label.setText(f"Изображение {self.current_index + 1}/{len(self.images)} | "
+                              f"Номер скана: {scan_number} | "
+                              f"Файл: {Path(file_name).name}")
+        
+        # Детали распознавания
+        details = []
+        if contour is not None:
+            details.append(f"Контур найден: {len(contour)} точек")
+            area = cv2.contourArea(contour)
+            details.append(f"Площадь контура: {area:.1f} пикселей²")
+            
+            # Вычисляем периметр контура
+            perimeter = cv2.arcLength(contour, True)
+            details.append(f"Периметр: {perimeter:.1f} пикселей")
+            
+            # Вычисляем компактность (отношение площади к квадрату периметра)
+            if perimeter > 0:
+                compactness = 4 * np.pi * area / (perimeter * perimeter)
+                details.append(f"Компактность: {compactness:.3f}")
+        else:
+            details.append("Контур не найден")
+            
+        if scan_number != "N/A":
+            details.append(f"Распознан номер: {scan_number}")
+        else:
+            details.append("Номер не распознан")
+            
+        # Добавляем информацию о размере изображения
+        details.append(f"Размер: {w}x{h} пикселей")
+            
+        self.details_label.setText(" | ".join(details))
+        
+    def show_previous(self):
+        """Показывает предыдущее изображение."""
+        if self.current_index > 0:
+            self.current_index -= 1
+            self.update_navigation_buttons()
+            self.show_current_image()
+            
+    def show_next(self):
+        """Показывает следующее изображение."""
+        if self.current_index < len(self.images) - 1:
+            self.current_index += 1
+            self.update_navigation_buttons()
+            self.show_current_image()
+            
+    def resizeEvent(self, event):
+        """Обработчик изменения размера окна."""
+        super().resizeEvent(event)
+        if self.scene and not self.scene.sceneRect().isEmpty():
+            self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+            
+    def keyPressEvent(self, event):
+        """Обработчик нажатий клавиш для навигации."""
+        if event.key() == Qt.Key.Key_Left:
+            self.show_previous()
+        elif event.key() == Qt.Key.Key_Right:
+            self.show_next()
+        elif event.key() == Qt.Key.Key_Escape:
+            self.close()
+        elif event.key() == Qt.Key.Key_0:  # Сброс масштаба
+            self.view.resetTransform()
+            self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+        else:
+            super().keyPressEvent(event)
+            
+    def wheelEvent(self, event):
+        """Обработчик колесика мыши для масштабирования."""
+        if event.angleDelta().y() > 0:
+            self.view.scale(1.1, 1.1)
+        else:
+            self.view.scale(0.9, 0.9)
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -575,12 +801,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar = None
         self.resample_points = 100  # Новый параметр по умолчанию
         self.delaunay_alpha = DELAUNAY_ALPHA  # Новый параметр по умолчанию
+        self.debug_viewer = DebugViewer(self)
         self.init_ui()
 
     def init_ui(self):
         # Создаем меню-бар
         self.create_menu_bar()
-        
+
         central_widget = QtWidgets.QWidget()
         self.setCentralWidget(central_widget)
         layout = QtWidgets.QVBoxLayout(central_widget)
@@ -604,47 +831,57 @@ class MainWindow(QtWidgets.QMainWindow):
     def create_menu_bar(self):
         """Создает меню-бар с действиями."""
         menubar = self.menuBar()
-        
+
         # Меню "Файл"
         file_menu = menubar.addMenu('&Файл')
-        
+
         # Действие "Открыть папку"
         open_action = QAction('&Открыть папку...', self)
         open_action.setShortcut('Ctrl+O')
         open_action.setStatusTip('Выбрать папку с изображениями сканов')
         open_action.triggered.connect(self.select_folder)
         file_menu.addAction(open_action)
-        
+
         # Новый пункт: Открыть одиночное изображение
         open_single_action = QAction('&Открыть изображение...', self)
         open_single_action.setShortcut('Ctrl+I')
         open_single_action.setStatusTip('Открыть отдельное изображение и показать распознанный контур')
         open_single_action.triggered.connect(self.open_single_image)
         file_menu.addAction(open_single_action)
-        
+
         # Разделитель
         file_menu.addSeparator()
-        
+
+        # Действие "Отладочный просмотрщик"
+        debug_action = QAction('&Отладочный просмотрщик...', self)
+        debug_action.setShortcut('Ctrl+D')
+        debug_action.setStatusTip('Открыть отладочный просмотрщик для проверки распознавания')
+        debug_action.triggered.connect(self.open_debug_viewer)
+        file_menu.addAction(debug_action)
+
+        # Разделитель
+        file_menu.addSeparator()
+
         # Действие "Выход"
         exit_action = QAction('&Выход', self)
         exit_action.setShortcut('Ctrl+Q')
         exit_action.setStatusTip('Выйти из приложения')
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
         # Меню "Инструменты"
         tools_menu = menubar.addMenu('&Инструменты')
-        
+
         # Действие "Настройки масштаба"
         settings_action = QAction('&Настройки масштаба...', self)
         settings_action.setShortcut('Ctrl+S')
         settings_action.setStatusTip('Настроить масштаб модели')
         settings_action.triggered.connect(self.open_settings)
         tools_menu.addAction(settings_action)
-        
+
         # Меню "Справка"
         help_menu = menubar.addMenu('&Справка')
-        
+
         # Действие "О программе"
         about_action = QAction('&О программе', self)
         about_action.setStatusTip('Информация о программе')
@@ -674,11 +911,11 @@ class MainWindow(QtWidgets.QMainWindow):
     def _find_optimal_alpha(self, contours, scan_numbers, angles, initial_delaunay_alpha):
         logging.info("Starting optimal DELAUNAY_ALPHA search using adaptive approach...")
         try:
-            low_alpha_bound = 1.0
-            high_alpha_bound = 1000.0
+            low_alpha_bound = 10.0
+            high_alpha_bound = 250.0
             best_manifold_alpha_in_range = None
-            binary_search_iterations = 5
-            linear_scan_steps = 5
+            binary_search_iterations = 3
+            linear_scan_steps = 3
             total_progress_steps = binary_search_iterations + linear_scan_steps
             self._set_progress(True, total_progress_steps, 0, "Поиск Alpha (фаза 1/2): %p%")
             for i in range(binary_search_iterations):
@@ -789,6 +1026,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.last_contours = contours
                 self.last_scan_numbers = scan_numbers
                 self.last_angles = angles
+                self.last_images = images  # Сохраняем изображения для отладки
+                self.last_image_files = [f.name for f in self.reader.image_files] # Store just the names
                 optimal_alpha = self._find_optimal_alpha(contours, scan_numbers, angles, DELAUNAY_ALPHA)
                 show_error(f"Optimal DELAUNAY_ALPHA: {optimal_alpha:.2f}")
                 model = self.builder.build_model(contours, scan_numbers, angles=angles, delaunay_alpha=optimal_alpha)
@@ -849,7 +1088,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         # Add buttons
         button_layout = QtWidgets.QHBoxLayout()
-        
+
         reset_button = QtWidgets.QPushButton("Сбросить")
         reset_button.clicked.connect(lambda: self._reset_scales(scale_x_input, scale_y_input))
         button_layout.addWidget(reset_button)
@@ -899,15 +1138,15 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.plotter.clear()
             else:
                 self.plotter = self.vtk_widget
-            
+
             # Облако точек
             points = self.builder.points
-            self.plotter.add_points(points, color='white', point_size=2, render_points_as_spheres=True, name='points')
-            
+            self.plotter.add_points(points, color='lightgreen', point_size=2, render_points_as_spheres=True, name='points')
+
             # Delaunay mesh: заливка и wireframe
             self.plotter.add_mesh(mesh, color='darkred', opacity=0.1, name='fill', lighting=False)
             self.plotter.add_mesh(mesh, color='white', opacity=0.3, style='wireframe', name='wire', line_width=0.75)
-            
+
             self.plotter.set_background((0.1, 0.1, 0.15))
             self.plotter.reset_camera()
             axes = pv.AxesAssembly(label_color='white', label_size=12)
@@ -950,30 +1189,63 @@ class MainWindow(QtWidgets.QMainWindow):
     def show_image_dialog(self, img, title="Результат"):
         """Показывает изображение в отдельном диалоговом окне."""
         try:
-            # Преобразуем изображение для Qt
-            if img.shape[2] == 4:
-                fmt = QtGui.QImage.Format.Format_RGBA8888
-            else:
-                fmt = QtGui.QImage.Format.Format_RGB888
-                img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            h, w = img.shape[:2]
-            qimg = QtGui.QImage(img.data, w, h, img.strides[0], fmt)
-            pixmap = QtGui.QPixmap.fromImage(qimg)
-            label = QtWidgets.QLabel()
-            label.setPixmap(pixmap)
-            label.setScaledContents(True)
             dlg = QtWidgets.QDialog(self)
             dlg.setWindowTitle(title)
             vbox = QtWidgets.QVBoxLayout(dlg)
+
+            # Convert to RGB and ensure C-contiguous for QImage
+            # Input 'img' is expected to be BGR from cv2.imdecode
+            img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            img_rgb_contiguous = np.ascontiguousarray(img_rgb)
+
+            h, w, ch = img_rgb_contiguous.shape
+            bytes_per_line = ch * w
+
+            # Keep a reference to the bytes object to prevent premature garbage collection
+            # Store it as an attribute of the dialog instance
+            dlg._image_buffer_for_qimage = img_rgb_contiguous.tobytes()
+
+            qimg = QtGui.QImage(dlg._image_buffer_for_qimage, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
+            pixmap = QtGui.QPixmap.fromImage(qimg)
+
+            label = QtWidgets.QLabel()
+            label.setPixmap(pixmap)
+            label.setScaledContents(True) # Make image scale to label size if label is resized
             vbox.addWidget(label)
+
             dlg.resize(min(w, 800), min(h, 600))
             dlg.exec()
         except Exception as e:
             show_error(f"Ошибка отображения изображения: {str(e)}")
 
+    def open_debug_viewer(self):
+        """Открывает отладочный просмотрщик изображений."""
+        try:
+            if not hasattr(self, 'last_images') or not self.last_images:
+                show_error("Нет данных для отладки. Сначала выберите папку с изображениями.")
+                return
+                
+            # Передаем данные в отладочный просмотрщик
+            self.debug_viewer.set_data(
+                self.last_images,
+                self.last_scan_numbers,
+                self.last_contours,
+                self.last_image_files
+            )
+            
+            # Показываем окно
+            self.debug_viewer.show()
+            self.debug_viewer.raise_()
+            self.debug_viewer.activateWindow()
+            
+        except Exception as e:
+            show_error(f"Ошибка открытия отладочного просмотрщика: {str(e)}")
+            logging.error(f"Ошибка открытия отладочного просмотрщика: {str(e)}", exc_info=True)
+
 
 if __name__ == '__main__':
     app = QtWidgets.QApplication([])
+    app.setQuitOnLastWindowClosed(True) # Ensure application quits when last window is closed
     window = MainWindow()
     window.show()
     app.exec()
