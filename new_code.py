@@ -22,7 +22,7 @@ ROI_PERCENTAGE = 0.025
 MIN_CONTOUR_AREA = 4
 CONFIDENCE_THRESHOLD = 0.7
 TARGET_NORM_SIZE = (20, 32)  # (ширина, высота)
-MORPH_KERNEL_MAX_SIZE = 1
+MORPH_KERNEL_MAX_SIZE = 3
 TEMPLATES_DIR = "templates"
 
 # === КОНСТАНТЫ МОДЕЛИРОВАНИЯ И ВЫЧИСЛЕНИЯ ОБЪЕМА ===
@@ -274,21 +274,27 @@ class DataReader:
 
 
 class ImageProcessor:
-    def __init__(self, saturation_threshold=0.1225):
+    def __init__(self, saturation_threshold=21, hue_max=61):
         self.saturation_threshold = saturation_threshold
+        self.hue_max = hue_max
     @staticmethod
-    def process_image(img, approximation_rate=CONTOUR_APPROX_RATE, saturation_threshold=0.0):
+    def process_image(img, approximation_rate=CONTOUR_APPROX_RATE, saturation_threshold=0.0, hue_max=40):
         """Выделяет контур из изображения."""
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            mask = hsv[:, :, 1] > (saturation_threshold * 255)
+            saturation_mask = hsv[:, :, 1] > saturation_threshold
+            hue_mask = (hsv[:, :, 0] <= hue_max)
+            mask = saturation_mask & hue_mask
             h, w = mask.shape
             kernel_size = min(MORPH_KERNEL_MAX_SIZE, h, w)
             if kernel_size < 1:
                 show_error("Размер ядра морфологии слишком мал")
                 return None
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+            for i in range(2):
+                kernel = np.ones((kernel_size, kernel_size), np.uint8)
+                mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
                 contour = max(contours, key=cv2.contourArea)
@@ -914,8 +920,8 @@ class MainWindow(QtWidgets.QMainWindow):
             low_alpha_bound = 10.0
             high_alpha_bound = 250.0
             best_manifold_alpha_in_range = None
-            binary_search_iterations = 3
-            linear_scan_steps = 3
+            binary_search_iterations = 1
+            linear_scan_steps = 1
             total_progress_steps = binary_search_iterations + linear_scan_steps
             self._set_progress(True, total_progress_steps, 0, "Поиск Alpha (фаза 1/2): %p%")
             for i in range(binary_search_iterations):
@@ -1015,7 +1021,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._set_progress(True, len(images), 0, "Обработка изображений: %p%")
                 contours = []
                 for idx, img in enumerate(images):
-                    contour = ImageProcessor.process_image(img, saturation_threshold=self.processor.saturation_threshold)
+                    contour = ImageProcessor.process_image(img, saturation_threshold=self.processor.saturation_threshold, hue_max=self.processor.hue_max)
                     if contour is not None:
                         contours.append(contour)
                     self._set_progress(True, len(images), idx + 1)
@@ -1086,6 +1092,12 @@ class MainWindow(QtWidgets.QMainWindow):
         delaunay_alpha_input.setText(str(self.delaunay_alpha))
         layout.addWidget(delaunay_alpha_input)
 
+        # Новое поле для hue_max
+        layout.addWidget(QtWidgets.QLabel("Максимальный оттенок (Hue Max для фильтрации): "))
+        hue_max_input = QtWidgets.QLineEdit()
+        hue_max_input.setText(str(self.processor.hue_max))
+        layout.addWidget(hue_max_input)
+
         # Add buttons
         button_layout = QtWidgets.QHBoxLayout()
 
@@ -1106,6 +1118,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 scale_y = float(scale_y_input.text())
                 resample_points = int(resample_points_input.text())
                 delaunay_alpha = float(delaunay_alpha_input.text())
+                hue_max = int(hue_max_input.text())
                 if resample_points < 4:
                     resample_points = 4
                 if delaunay_alpha < 1.0:
@@ -1113,6 +1126,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.resample_points = resample_points
                 self.delaunay_alpha = delaunay_alpha
                 self.builder.set_scale(scale_x, scale_y)
+                self.processor.hue_max = hue_max
                 # Перестраиваем модель с новыми масштабами, количеством точек и alpha
                 if hasattr(self, 'last_contours') and hasattr(self, 'last_scan_numbers') and hasattr(self, 'last_angles'):
                     self.builder.n_resample_points = self.resample_points
@@ -1169,9 +1183,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 show_error(f"Не удалось загрузить изображение: {file_path}")
                 return
             # Обработка изображения для выделения контура
-            contour = ImageProcessor.process_image(img, saturation_threshold=self.processor.saturation_threshold)
+            contour = ImageProcessor.process_image(img, saturation_threshold=self.processor.saturation_threshold, hue_max=self.processor.hue_max)
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            mask = hsv[:, :, 1] > (self.processor.saturation_threshold * 255)
+            mask = hsv[:, :, 1] > (self.processor.saturation_threshold)
             mask = mask.astype(np.uint8) * 255
             # Визуализация результата
             vis_img = img.copy()
