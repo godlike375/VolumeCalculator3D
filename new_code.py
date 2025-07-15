@@ -709,24 +709,35 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setMaximum(maximum)
             self.progress_bar.setValue(value)
             QtWidgets.QApplication.processEvents()
+    def _is_mesh_closed_and_manifold(self, mesh):
+        """Проверяет, что mesh manifold, без дыр, с объёмом и хотя бы одной гранью."""
+        try:
+            return (
+                hasattr(mesh, 'is_manifold') and mesh.is_manifold and
+                hasattr(mesh, 'n_open_edges') and mesh.n_open_edges == 0 and
+                hasattr(mesh, 'n_faces') and mesh.n_faces > 0 and
+                hasattr(mesh, 'volume') and mesh.volume > 0
+            )
+        except Exception as e:
+            logging.error(f"Ошибка проверки замкнутости mesh: {e}")
+            return False
+
     def _find_optimal_alpha(
         self, contours, scan_numbers, angles, initial_delaunay_alpha
     ):
         logging.info(
-            "Starting optimal DELAUNAY_ALPHA search using adaptive approach..."
+            "Starting optimal DELAUNAY_ALPHA search for closed manifold mesh..."
         )
         try:
-            low_alpha_bound = 10.0
-            high_alpha_bound = 250.0
-            best_manifold_alpha_in_range = None
-            binary_search_iterations = 1
-            linear_scan_steps = 1
-            total_progress_steps = binary_search_iterations + linear_scan_steps
-            self._set_progress(
-                True, total_progress_steps, 0, "Поиск Alpha (фаза 1/2): %p%"
-            )
-            for i in range(binary_search_iterations):
-                current_alpha = (low_alpha_bound + high_alpha_bound) / 2
+            low_alpha = 4.0
+            high_alpha = 400.0
+            best_alpha = None
+            best_mesh = None
+            max_iterations = 20
+            found = False
+            self._set_progress(True, max_iterations, 0, "Поиск Alpha: %p%")
+            for i in range(max_iterations):
+                current_alpha = (low_alpha + high_alpha) / 2.0
                 try:
                     if self.builder is None:
                         logging.error(
@@ -739,116 +750,41 @@ class MainWindow(QtWidgets.QMainWindow):
                         angles=angles,
                         delaunay_alpha=current_alpha,
                     )
-                    is_manifold = model.is_manifold
-                    volume = model.volume
+                    is_closed = self._is_mesh_closed_and_manifold(model)
                     logging.info(
-                        f"  Binary Alpha={current_alpha:.2f}: Manifold={is_manifold}, Volume={volume:.2f}"
+                        f"Alpha={current_alpha:.2f}: Closed={is_closed}, "
+                        f"Manifold={getattr(model, 'is_manifold', None)}, "
+                        f"OpenEdges={getattr(model, 'n_open_edges', None)}, "
+                        f"Faces={getattr(model, 'n_faces', None)}, "
+                        f"Volume={getattr(model, 'volume', None):.2f}"
                     )
-                    if is_manifold and volume > 0:
-                        best_manifold_alpha_in_range = current_alpha
-                        high_alpha_bound = current_alpha
+                    if is_closed:
+                        best_alpha = current_alpha
+                        best_mesh = model
+                        high_alpha = current_alpha
+                        found = True
                     else:
-                        low_alpha_bound = current_alpha
-                except ValueError as e:
-                    logging.warning(
-                        f"  Binary Search: Failed to build model for Alpha={current_alpha:.2f}: {e}"
-                    )
-                    low_alpha_bound = current_alpha
+                        low_alpha = current_alpha
                 except Exception as e:
-                    logging.error(
-                        f"  Binary Search: Unexpected error for Alpha={current_alpha:.2f}: {e}",
-                        exc_info=True,
-                    )
-                    low_alpha_bound = current_alpha
-                self._set_progress(True, total_progress_steps, i + 1)
-            if best_manifold_alpha_in_range is None:
-                logging.warning(
-                    f"Binary search failed to find a manifold alpha in range [1.0, 1000.0]. Reverting to a broader linear scan starting from initial_delaunay_alpha."
-                )
-                search_start = max(1.0, initial_delaunay_alpha - 100)
-                search_end = initial_delaunay_alpha + 300
-                alpha_values_for_linear_scan = np.linspace(
-                    search_start, search_end, linear_scan_steps
-                )
-                best_manifold_alpha_in_range = initial_delaunay_alpha
-            else:
-                logging.info(
-                    f"Phase 1 complete. Smallest manifold alpha found (approx): {best_manifold_alpha_in_range:.2f}"
-                )
-                search_start = max(1.0, best_manifold_alpha_in_range - 50)
-                search_end = best_manifold_alpha_in_range + 200
-                if search_end > 1000.0:
-                    search_end = 1000.0
-                if search_start >= search_end:
-                    search_start = max(1.0, search_end - 100)
-                alpha_values_for_linear_scan = np.linspace(
-                    search_start, search_end, linear_scan_steps
-                )
-                logging.info(
-                    f"Phase 2: Linear scan in refined range: [{search_start:.2f}, {search_end:.2f}] with {linear_scan_steps} steps."
-                )
-            candidate_alpha_results = []
-            self._set_progress(
-                True,
-                total_progress_steps,
-                binary_search_iterations,
-                "Поиск Alpha (фаза 2/2): %p%",
-            )
-            for idx, current_alpha in enumerate(alpha_values_for_linear_scan):
-                try:
-                    model = self.builder.build_model(
-                        contours,
-                        scan_numbers,
-                        angles=angles,
-                        delaunay_alpha=current_alpha,
-                    )
-                    volume = model.volume
-                    n_faces = model.n_faces
-                    is_manifold = model.is_manifold
-                    logging.info(
-                        f"  Linear Alpha={current_alpha:.2f}: Volume={volume:.2f} мм³, Faces={n_faces}, Manifold={is_manifold}"
-                    )
-                    if is_manifold and volume > 0:
-                        candidate_alpha_results.append(
-                            {"alpha": current_alpha, "volume": volume}
-                        )
-                except ValueError as e:
                     logging.warning(
-                        f"  Linear Scan: Failed to build model for Alpha={current_alpha:.2f}: {e}"
+                        f"  Search: Failed to build model for Alpha={current_alpha:.2f}: {e}"
                     )
-                except Exception as e:
-                    logging.error(
-                        f"  Linear Scan: Unexpected error for Alpha={current_alpha:.2f}: {e}",
-                        exc_info=True,
-                    )
-                self._set_progress(
-                    True, total_progress_steps, binary_search_iterations + idx + 1
-                )
-        finally:
+                    low_alpha = current_alpha
+                self._set_progress(True, max_iterations, i + 1)
+                if abs(high_alpha - low_alpha) < 1e-2:
+                    break
             self._set_progress(False)
-        if not candidate_alpha_results:
-            logging.warning(
-                "No suitable alpha value found to create a manifold mesh in refined scan. Using default DELAUNAY_ALPHA."
-            )
-            return initial_delaunay_alpha
-        volumes = [r["volume"] for r in candidate_alpha_results]
-        if not volumes:
-            logging.warning(
-                "No valid volumes found among manifold candidates. Using default DELAUNAY_ALPHA."
-            )
-            return initial_delaunay_alpha
-        median_volume = np.median(volumes)
-        best_alpha_candidate = None
-        min_diff_from_median = float("inf")
-        for r in candidate_alpha_results:
-            current_diff = abs(r["volume"] - median_volume)
-            if current_diff < min_diff_from_median:
-                min_diff_from_median = current_diff
-                best_alpha_candidate = r["alpha"]
-        logging.info(
-            f"Optimal DELAUNAY_ALPHA selected: {best_alpha_candidate:.2f} (median volume of candidates: {median_volume:.2f} мм³)"
-        )
-        return best_alpha_candidate
+            if found and best_alpha is not None:
+                logging.info(f"Минимальный замкнутый DELAUNAY_ALPHA найден: {best_alpha:.2f}")
+                return best_alpha
+            else:
+                logging.warning(
+                    "Не удалось найти замкнутый manifold mesh. Используется дефолтный DELAUNAY_ALPHA."
+                )
+                return initial_delaunay_alpha
+        except Exception as e:
+            show_error(f"Ошибка обработки: {str(e)}")
+            logging.error(f"Ошибка обработки: {str(e)}", exc_info=True)
     def select_folder(self):
         try:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
