@@ -9,13 +9,25 @@ from PyQt6.QtWidgets import QApplication, QGraphicsScene, QGraphicsView, QMessag
 from pyvistaqt import QtInteractor
 
 # === КОНСТАНТЫ ЛОГИРОВАНИЯ ===
-LOG_FILENAME, LOG_FORMAT, LOG_LEVEL = "scan_processor.log", "%(asctime)s - %(levelname)s - %(message)s", logging.INFO
-ROI_PERCENTAGE, MIN_CONTOUR_AREA, CONFIDENCE_THRESHOLD = 0.025, 4, 0.7
-TARGET_NORM_SIZE, MORPH_KERNEL_MAX_SIZE, TEMPLATES_DIR = (20, 32), 2, "templates"
-DEFAULT_REAL_WIDTH, DEFAULT_REAL_HEIGHT = 10.0, 2.0
-SCAN_NUMBER_MIN, SCAN_NUMBER_MAX, DELAUNAY_ALPHA = 1, 99, 50.0
-CONTOUR_APPROX_RATE, CONTOUR_MIN_POINTS, VOLUME_DIVIDER = 0.000225, 4, 1000.0
-TARGET_MIN_ANGLE_STEP, OUTLIER_THRESHOLD_PERCENT_DEFAULT, OUTLIER_ABSOLUTE_THRESHOLD_MM = 10, 0.25, 0.1
+LOG_FILENAME = "scan_processor.log"
+LOG_FORMAT = "% (asctime)s - %(levelname)s - %(message)s"
+LOG_LEVEL = logging.INFO
+ROI_PERCENTAGE = 0.025
+MIN_CONTOUR_AREA = 4
+CONFIDENCE_THRESHOLD = 0.7
+TARGET_NORM_SIZE = (20, 32)
+MORPH_KERNEL_MAX_SIZE = 2
+DEFAULT_REAL_WIDTH = 10.0
+DEFAULT_REAL_HEIGHT = 2.0
+SCAN_NUMBER_MIN = 1
+SCAN_NUMBER_MAX = 99
+DELAUNAY_ALPHA = 50.0
+CONTOUR_APPROX_RATE = 0.000225
+CONTOUR_MIN_POINTS = 4
+VOLUME_DIVIDER = 1000.0
+OUTLIER_THRESHOLD_PERCENT_DEFAULT = 0.25
+OUTLIER_ABSOLUTE_THRESHOLD_MM = 0.1
+TEMPLATES_DIR = "templates"
 
 # Настройка логирования
 # Для совместимости с Python < 3.9, открываем файл явно с utf-8 кодировкой
@@ -27,10 +39,15 @@ logging.basicConfig(
 
 def show_error(message: str, level: str = "critical"):
     """Универсальная функция для отображения ошибок и логирования."""
-    log_func, dialog_func, console_prefix = {"critical": (logging.error, QMessageBox.critical, "CRITICAL ERROR"), "warning": (logging.warning, QMessageBox.warning, "WARNING")}[level]
+    mapping = {"critical": (logging.error, QMessageBox.critical, "CRITICAL ERROR"),
+               "warning": (logging.warning, QMessageBox.warning, "WARNING")}
+    log_func = mapping[level][0]
+    dialog_func = mapping[level][1]
+    console_prefix = mapping[level][2]
     log_func(message)
     app = QApplication.instance()
-    (dialog_func(None, "Ошибка" if level == "critical" else "Внимание", message) if app else print(f"{console_prefix}: {message}"))
+    (dialog_func(None, "Ошибка" if level == "critical" else "Внимание", message) if app else print(
+        f"{console_prefix}: {message}"))
 
 
 # === УТИЛИТЫ ДЛЯ РАБОТЫ С ИЗОБРАЖЕНИЯМИ ===
@@ -56,8 +73,8 @@ def resample_contour(contour: np.ndarray, n_points: int = 100) -> np.ndarray:
         elif idx >= len(pts):
             new_pts.append(pts[-1])
         else:
-            t0, t1 = cumulative[idx-1], cumulative[idx]
-            p0, p1 = pts[idx-1], pts[idx]
+            t0, t1 = cumulative[idx - 1], cumulative[idx]
+            p0, p1 = pts[idx - 1], pts[idx]
             alpha = (t - t0) / (t1 - t0) if t1 > t0 else 0
             new_pt = (1 - alpha) * p0 + alpha * p1
             new_pts.append(new_pt)
@@ -80,18 +97,15 @@ class ModelSettings:
 
 class DataReader:
     def __init__(self, directory, templates_dir=TEMPLATES_DIR):
-        self.directory, self.templates_dir = Path(directory), Path(templates_dir)
-        self.images, self.scan_numbers, self.digit_templates, self.image_shape = [], [], {}, None
+        self.directory = Path(directory)
+        self.templates_dir = Path(templates_dir)
+        self.images = []
+        self.scan_numbers = []
+        self.arrow_angles = []
+        self.image_files = []
+        self.digit_templates = {}
+        self.image_shape = None
         self._load_digit_templates_from_templates()
-
-    def _imread_unicode(self, path):
-        try:
-            with open(path, "rb") as f:
-                img = cv2.imdecode(np.asarray(bytearray(f.read()), dtype=np.uint8), cv2.IMREAD_COLOR)
-            if img is None: raise ValueError(f"Не удалось декодировать изображение: {path}")
-            return img
-        except Exception as e:
-            logging.error(f"Ошибка чтения изображения {path}: {str(e)}"); return None
 
     def _load_digit_templates_from_templates(self):
         self.digit_templates = {}
@@ -111,6 +125,16 @@ class DataReader:
         else:
             logging.info(f"Загружено {len(self.digit_templates)} шаблонов цифр: {sorted(self.digit_templates.keys())}")
 
+    def _imread_unicode(self, path):
+        try:
+            with open(path, "rb") as f:
+                img = cv2.imdecode(np.asarray(bytearray(f.read()), dtype=np.uint8), cv2.IMREAD_COLOR)
+            if img is None: raise ValueError(f"Не удалось декодировать изображение: {path}")
+            return img
+        except Exception as e:
+            logging.error(f"Ошибка чтения изображения {path}: {str(e)}");
+            return None
+
     def _find_number_bbox(self, gray_roi):
         """Находит ограничивающий прямоугольник для числа."""
         try:
@@ -118,10 +142,13 @@ class DataReader:
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
             valid = [c for c in contours if cv2.contourArea(c) > MIN_CONTOUR_AREA]
             if not valid: show_error("Валидные контуры числа не найдены", level="warning"); return None
-            all_points = np.vstack(valid).squeeze(); min_x, min_y = all_points.min(axis=0); max_x, max_y = all_points.max(axis=0)
+            all_points = np.vstack(valid).squeeze();
+            min_x, min_y = all_points.min(axis=0);
+            max_x, max_y = all_points.max(axis=0)
             return (int(min_x), int(min_y), int(max_x - min_x), int(max_y - min_y))
         except Exception as e:
-            show_error(f"Ошибка поиска контура числа: {str(e)}"); return None
+            show_error(f"Ошибка поиска контура числа: {str(e)}");
+            return None
 
     def _extract_and_normalize_number(self, gray_roi, bbox):
         """Извлекает и нормализует изображение числа."""
@@ -132,7 +159,7 @@ class DataReader:
             if w <= 0 or h <= 0:
                 show_error(f"Некорректные размеры bbox: w={w}, h={h}")
                 return None
-            number_img = gray_roi[y : y + h, x : x + w]
+            number_img = gray_roi[y: y + h, x: x + w]
             if number_img.size == 0:
                 show_error(f"Пустое изображение числа после вырезки bbox")
                 return None
@@ -141,8 +168,135 @@ class DataReader:
             show_error(f"Ошибка нормализации числа: {str(e)}")
             return None
 
+    def _find_arrow_roi(self, img_bgr):
+        """Вырезает ROI со стрелкой из правого верхнего угла."""
+        h, w = img_bgr.shape[:2]
+        roi_h = int(h * 0.15)
+        roi_w = int(w * 0.15)
+        roi_bgr = img_bgr[0:roi_h, w - roi_w:w]
+        return roi_bgr
+
+    def _extract_arrow_angle(self, roi_bgr):
+        MIN_CONTOUR_POINTS = 10
+        MIN_CONTOUR_AREA = 20
+        SYMMETRY_EPSILON = 1e-2
+
+        try:
+            # === ШАГ 1: ПРЕДОБРАБОТКА И ПОИСК КОНТУРА (без изменений) ===
+            hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
+            lower = np.array([28, 16, 165], dtype=np.uint8)
+            upper = np.array([36, 255, 255], dtype=np.uint8)
+            mask = cv2.inRange(hsv, lower, upper)
+            kernel = np.ones((2, 2), np.uint8)
+            mask = cv2.dilate(mask, kernel, iterations=2)
+            mask = cv2.erode(mask, kernel, iterations=1)
+            mask = cv2.dilate(mask, kernel, iterations=1)
+            
+            contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+            if not contours:
+                show_error("Стрелка не найдена в ROI (контуры отсутствуют)", level="warning")
+                return None, None, None, None, None
+
+            contour = max(contours, key=cv2.contourArea)
+            
+            if len(contour) < MIN_CONTOUR_POINTS or cv2.contourArea(contour) < MIN_CONTOUR_AREA:
+                show_error("Контур стрелки слишком мал или является шумом", level="warning")
+                return None, None, None, None, None
+
+            contour_points = contour[:, 0, :]
+
+            # === ШАГ 2: ПОИСК БАЗОВЫХ ГЕОМЕТРИЧЕСКИХ СВОЙСТВ ===
+            M = cv2.moments(contour)
+            if M['m00'] == 0:
+                return None, None, None, None, None
+            
+            centroid = np.array([M['m10'] / M['m00'], M['m01'] / M['m00']])
+            
+            # fitLine дает нам вектор направления оси и точку на этой оси
+            [vx, vy, x0, y0] = cv2.fitLine(contour, cv2.DIST_L2, 0, 0.01, 0.01)
+            main_axis_direction = np.array([vx, vy]).reshape(-1)
+            main_axis_point = np.array([x0, y0]).reshape(-1)
+
+            # === ШАГ 3: ПОИСК "ПЛЕЧ" НАКОНЕЧНИКА ===
+            # Вектор, перпендикулярный главной оси
+            normal_vector = np.array([-main_axis_direction[1], main_axis_direction[0]])
+            
+            # Проецируем все точки на нормаль, чтобы найти самые удаленные от оси
+            projections_on_normal = (contour_points - main_axis_point) @ normal_vector
+            
+            # Индексы точек с макс. и мин. проекцией (самые широкие точки)
+            widest_point_pos_idx = np.argmax(projections_on_normal)
+            widest_point_neg_idx = np.argmin(projections_on_normal)
+            
+            p_wide1 = contour_points[widest_point_pos_idx]
+            p_wide2 = contour_points[widest_point_neg_idx]
+            
+            # Середина "плеч" наконечника
+            barbs_midpoint = (p_wide1 + p_wide2) / 2.0
+
+            # === ШАГ 4: ОПРЕДЕЛЕНИЕ НАПРАВЛЕНИЯ ПО АСИММЕТРИИ ===
+            # Вектор от центра масс к середине плеч. Он указывает на наконечник.
+            orientation_vector = barbs_midpoint - centroid
+            orientation_vector_norm = np.linalg.norm(orientation_vector)
+
+            # === ШАГ 5: ОБРАБОТКА СИММЕТРИЧНЫХ СЛУЧАЕВ (ПЛАН Б) ===
+            if orientation_vector_norm < SYMMETRY_EPSILON:
+                # Фигура симметрична, центр масс не дает информации о направлении.
+                # Используем старый метод для поиска кандидатов на наконечник/основание.
+                projections_on_main_axis = (contour_points - centroid) @ main_axis_direction
+                tip_candidate_idx = np.argmax(projections_on_main_axis)
+                base_candidate_idx = np.argmin(projections_on_main_axis)
+                
+                tip_candidate = contour_points[tip_candidate_idx]
+                base_candidate = contour_points[base_candidate_idx]
+                
+                # Наконечник - та из крайних точек, что ближе к "плечам".
+                dist_tip_to_barbs = np.linalg.norm(tip_candidate - barbs_midpoint)
+                dist_base_to_barbs = np.linalg.norm(base_candidate - barbs_midpoint)
+                
+                if dist_tip_to_barbs < dist_base_to_barbs:
+                    # fitLine угадал направление
+                    arrow_direction = main_axis_direction
+                else:
+                    # fitLine ошибся с направлением, инвертируем
+                    arrow_direction = -main_axis_direction
+            else:
+                # Основной путь: используем вектор ориентации
+                arrow_direction = orientation_vector / orientation_vector_norm
+
+            # === ШАГ 6: ФИНАЛЬНЫЙ ПОИСК НАКОНЕЧНИКА И ОСНОВАНИЯ ===
+            # Проецируем все точки на НАДЕЖНЫЙ вектор направления
+            final_projections = (contour_points - centroid) @ arrow_direction
+            
+            tip_idx = np.argmax(final_projections)
+            base_idx = np.argmin(final_projections)
+            
+            tip = contour_points[tip_idx]
+            base = contour_points[base_idx]
+
+            # === ШАГ 7: РАСЧЁТ УГЛА ===
+            vec = tip - base
+            # Проверка, что вектор не нулевой
+            if np.linalg.norm(vec) == 0:
+                return None, None, None, None, None
+
+            # Угол в радианах. Используем atan2(x, -y) для получения 0 градусов для стрелки вверх.
+            angle_rad = np.arctan2(vec[0], -vec[1])
+            angle_deg = np.degrees(angle_rad)
+            
+            # Приводим угол к диапазону [0, 360)
+            angle_deg = (angle_deg + 360) % 360
+
+            return angle_deg, base, tip, vec, mask
+
+        except Exception as e:
+            # Обязательно логируем полный стектрейс для отладки
+            import traceback
+            show_error(f"Критическая ошибка извлечения угла стрелки: {str(e)}\n{traceback.format_exc()}")
+            return None, None, None, None, None
+
     def _find_number_roi(self, img_bgr):
-        """Вырезает ROI с номером скана из левого верхнего угла."""
         h, w = img_bgr.shape[:2]
         roi_h = int(h * 0.2)
         roi_w = int(w * 0.2)
@@ -157,7 +311,7 @@ class DataReader:
         bboxes = sorted(bboxes, key=lambda b: b[0])
         digit_imgs = []
         for x, y, w, h in bboxes:
-            digit = roi_gray[y : y + h, x : x + w]
+            digit = roi_gray[y: y + h, x: x + w]
             norm_digit = cv2.resize(digit, TARGET_NORM_SIZE, interpolation=cv2.INTER_AREA)
             digit_imgs.append(norm_digit)
         return digit_imgs
@@ -197,28 +351,75 @@ class DataReader:
 
     def read_images(self):
         try:
-            self.images, self.scan_numbers, self.image_files, seen_numbers, image_shape, all_image_paths = [], [], [], set(), None, []
-            for ext in ["*.png", "*.jpg", "*.jpeg", "*.bmp"]: all_image_paths.extend(self.directory.glob(ext))
+            self.images = []
+            self.arrow_angles = []
+            self.scan_numbers = []
+            self.image_files = []
+            seen_angles = []
+            seen_numbers = set()
+            image_shape = None
+            all_image_paths = []
+            for ext in ["*.png", "*.jpg", "*.jpeg", "*.bmp"]:
+                all_image_paths.extend(self.directory.glob(ext))
             all_image_paths = sorted(all_image_paths, key=lambda p: p.name)
+            image_data = []
             for file_path in all_image_paths:
                 img_bgr = self._imread_unicode(file_path)
-                if img_bgr is None: continue
-                roi_bgr, roi_gray = self._find_number_roi(img_bgr)
-                number = self._extract_number(roi_gray)
-                if number is None or not (SCAN_NUMBER_MIN <= number <= SCAN_NUMBER_MAX): show_error(f"Неверный номер скана в файле: {file_path.name}", level="warning"); continue
-                if number in seen_numbers: show_error(f"Обнаружен дубликат номера скана {number} в файле: {file_path.name}", level="warning"); continue
-                if image_shape is None: image_shape = img_bgr.shape
-                elif img_bgr.shape != image_shape: show_error(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})"); raise ValueError(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})")
-                self.images.append(img_bgr); self.scan_numbers.append(number); self.image_files.append(file_path); seen_numbers.add(number)
-            sorted_data = sorted(zip(self.scan_numbers, self.images, self.image_files))
-            self.scan_numbers, self.images, self.image_files = [item[0] for item in sorted_data], [item[1] for item in sorted_data], [item[2] for item in sorted_data]
-            missing = set(range(min(self.scan_numbers), max(self.scan_numbers) + 1)) - set(self.scan_numbers) if self.scan_numbers else set()
-            if missing: show_error(f"Отсутствуют сканы: {sorted(list(missing))}", level="warning")
-            if not self.images: show_error("Не найдено ни одного валидного изображения"); raise ValueError("Не найдено ни одного валидного изображения")
+                if img_bgr is None:
+                    continue
+                roi_bgr = self._find_arrow_roi(img_bgr)
+                #debug_prefix = file_path.stem
+                angle, *_ = self._extract_arrow_angle(roi_bgr)#, debug_prefix=debug_prefix)
+                roi_bgr_num, roi_gray_num = self._find_number_roi(img_bgr)
+                number = self._extract_number(roi_gray_num)
+                if angle is None and number is None:
+                    show_error(f"Не удалось определить ни угол стрелки, ни номер скана в файле: {file_path.name}", level="warning")
+                    continue
+                if image_shape is None:
+                    image_shape = img_bgr.shape
+                elif img_bgr.shape != image_shape:
+                    show_error(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})")
+                    raise ValueError(f"Обнаружено изображение с другим разрешением: {file_path.name} (ожидалось {image_shape}, получено {img_bgr.shape})")
+                image_data.append({
+                    'img': img_bgr,
+                    'angle': angle,
+                    'number': number,
+                    'file': file_path
+                })
+            # Сортировка и проверка согласованности
+            valid_by_number = [d for d in image_data if d['number'] is not None and SCAN_NUMBER_MIN <= d['number'] <= SCAN_NUMBER_MAX]
+            valid_by_angle = [d for d in image_data if d['angle'] is not None]
+            use_number = len(valid_by_number) == len(image_data) and len(set(d['number'] for d in valid_by_number)) == len(valid_by_number)
+            use_angle = len(valid_by_angle) == len(image_data) and len(set(d['angle'] for d in valid_by_angle)) == len(valid_by_angle)
+            if use_number:
+                sorted_data = sorted(image_data, key=lambda d: d['number'])
+                if use_angle:
+                    angle_sorted = sorted(image_data, key=lambda d: d['angle'])
+                    for i, d in enumerate(sorted_data):
+                        if abs(d['angle'] - angle_sorted[i]['angle']) > 0.1:
+                            show_error(f"Несовпадение порядка: номер {d['number']} не соответствует углу {d['angle']:.2f} (файл: {d['file'].name})", level="warning")
+                self.images = [d['img'] for d in sorted_data]
+                self.scan_numbers = [d['number'] for d in sorted_data]
+                self.arrow_angles = [d['angle'] for d in sorted_data]
+                self.image_files = [d['file'] for d in sorted_data]
+            elif use_angle:
+                sorted_data = sorted(image_data, key=lambda d: d['angle'])
+                self.images = [d['img'] for d in sorted_data]
+                self.scan_numbers = [d['number'] for d in sorted_data]
+                self.arrow_angles = [d['angle'] for d in sorted_data]
+                self.image_files = [d['file'] for d in sorted_data]
+                show_error("Сортировка по углам стрелок, номера сканов не используются или не уникальны", level="warning")
+            else:
+                show_error("Не удалось однозначно определить порядок сканов: ни номера, ни углы не уникальны/полны", level="critical")
+                raise ValueError("Не удалось однозначно определить порядок сканов")
+            if not self.images:
+                show_error("Не найдено ни одного валидного изображения")
+                raise ValueError("Не найдено ни одного валидного изображения")
             self.image_shape = image_shape
-            return self.images, self.scan_numbers, image_shape
+            return self.images, self.arrow_angles, self.scan_numbers, self.image_shape
         except Exception as e:
-            show_error(f"Ошибка чтения данных: {str(e)}")
+            import traceback
+            show_error(f"Ошибка чтения данных: {str(e)}\n{traceback.format_exc()}")
             raise
 
 
@@ -226,20 +427,27 @@ class ImageProcessor:
     def __init__(self, saturation_threshold=24, hue_max=62):
         self.saturation_threshold = saturation_threshold
         self.hue_max = hue_max
+
     @staticmethod
-    def process_image(img: np.ndarray, approximation_rate: float = CONTOUR_APPROX_RATE, saturation_threshold: float = 0.0, hue_max: int = 40) -> np.ndarray:
+    def process_image(img: np.ndarray, approximation_rate: float = CONTOUR_APPROX_RATE,
+                      saturation_threshold: float = 0.0, hue_max: int = 40) -> np.ndarray:
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            mask = (hsv[:, :, 1] > saturation_threshold) & (hsv[:, :, 0] <= hue_max)
+            lower = np.array([9, 26, 0], dtype=np.uint8)
+            upper = np.array([68, 255, 255], dtype=np.uint8)
+            mask = cv2.inRange(hsv, lower, upper)
             h, w = mask.shape
             kernel_size = min(MORPH_KERNEL_MAX_SIZE, h, w)
             if kernel_size < 1:
                 show_error("Размер ядра морфологии слишком мал")
                 return None
+            mask = mask.astype(np.uint8)
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
-            for _ in range(3):
-                mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
+            mask = cv2.dilate(mask, kernel, iterations=1)
+            mask = cv2.erode(mask, kernel, iterations=1)
+            #mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
+            #for _ in range(3):
+            #    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
             contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
             if contours:
                 contour = max(contours, key=cv2.contourArea)
@@ -258,60 +466,57 @@ class ImageProcessor:
 
 
 class ModelBuilder:
-    def __init__(self, image_width, image_height, real_width=DEFAULT_REAL_WIDTH, real_height=DEFAULT_REAL_HEIGHT, n_resample_points=100):
-        self.settings = ModelSettings(real_width=real_width, real_height=real_height, scale_x=image_width / real_width if real_width else 1.0, scale_y=image_height / real_height if real_height else 1.0, resample_points=n_resample_points)
+    def __init__(self, image_width, image_height, real_width=DEFAULT_REAL_WIDTH, real_height=DEFAULT_REAL_HEIGHT,
+                 n_resample_points=100):
+        self.settings = ModelSettings(real_width=real_width, real_height=real_height,
+                                      scale_x=image_width / real_width if real_width else 1.0,
+                                      scale_y=image_height / real_height if real_height else 1.0,
+                                      resample_points=n_resample_points)
         self.points, self.mesh, self.volume = None, None, 0.0
         self.IMAGE_WIDTH, self.IMAGE_HEIGHT, self.REAL_WIDTH, self.REAL_HEIGHT = image_width, image_height, real_width, real_height
         self.scale_x, self.scale_y, self.n_resample_points = self.settings.scale_x, self.settings.scale_y, n_resample_points
         self.outlier_detection_enabled, self.outlier_threshold_percent, self.outlier_absolute_threshold_mm = True, OUTLIER_THRESHOLD_PERCENT_DEFAULT, OUTLIER_ABSOLUTE_THRESHOLD_MM
         logging.info(f"Default scales calculated: X,Z={self.scale_x:.2f}, Y={self.scale_y:.2f} pixels/mm")
+
     def set_scale(self, scale_x: float, scale_y: float):
         self.scale_x = scale_x if scale_x > 0 else self.IMAGE_WIDTH / self.REAL_WIDTH
         self.scale_y = scale_y if scale_y > 0 else self.IMAGE_HEIGHT / self.REAL_HEIGHT
         self.settings.scale_x, self.settings.scale_y = self.scale_x, self.scale_y
         logging.info(f"Scale set: X,Z={self.scale_x:.2f}, Y={self.scale_y:.2f} pixels/mm")
+
     def _resample_contour(self, contour, n_points=None):
         n = n_points or getattr(self, 'n_resample_points', 100)
         return resample_contour(contour, n)
-    def _interpolate_contour(self, c1, c2, t):
-        try:
-            if c1 is None or c2 is None or c1.shape != c2.shape:
-                logging.error(f"Не удалось ресэмплировать контуры для интерполяции. c1r shape: {c1.shape if c1 is not None else 'None'}, c2r shape: {c2.shape if c2 is not None else 'None'}")
-                return c1 if c1 is not None else c1
-            interp = c1.astype(np.float32) * (1 - t) + c2.astype(np.float32) * t
-            return interp.astype(np.int32)
-        except Exception as e:
-            logging.error(f"Ошибка интерполяции контура: {str(e)}", exc_info=True)
-            try:
-                return self._resample_contour(c1)
-            except Exception:
-                return c1
+
     def _filter_outliers(self, contours_3d_points_list, angles, center):
         if not self.outlier_detection_enabled or len(contours_3d_points_list) < 3:
             return contours_3d_points_list
         filtered = []
         n = 0
         for i, curr in enumerate(contours_3d_points_list):
-            prev = contours_3d_points_list[(i-1)%len(contours_3d_points_list)]
-            nxt = contours_3d_points_list[(i+1)%len(contours_3d_points_list)]
+            prev = contours_3d_points_list[(i - 1) % len(contours_3d_points_list)]
+            nxt = contours_3d_points_list[(i + 1) % len(contours_3d_points_list)]
             if prev.shape[0] != curr.shape[0] or nxt.shape[0] != curr.shape[0]:
                 filtered.append(curr)
                 continue
-            r_curr = np.abs(curr[:,0])
-            r_prev = np.abs(prev[:,0])
-            r_next = np.abs(nxt[:,0])
+            r_curr = np.abs(curr[:, 0])
+            r_prev = np.abs(prev[:, 0])
+            r_next = np.abs(nxt[:, 0])
             mod = np.copy(curr)
             for j in range(curr.shape[0]):
                 avg = (r_prev[j] + r_next[j]) / 2.0
-                if (avg < self.outlier_absolute_threshold_mm * 2 and abs(r_curr[j] - avg) > self.outlier_absolute_threshold_mm) or (avg > 1e-9 and abs(r_curr[j] - avg) / avg > self.outlier_threshold_percent):
+                if (avg < self.outlier_absolute_threshold_mm * 2 and abs(
+                        r_curr[j] - avg) > self.outlier_absolute_threshold_mm) or (
+                        avg > 1e-9 and abs(r_curr[j] - avg) / avg > self.outlier_threshold_percent):
                     mod[j] = (prev[j] + nxt[j]) / 2.0
                     n += 1
             filtered.append(mod)
-        logging.info(f"Фильтрация выбросов завершена. Всего скорректировано точек: {n}" if n else "Фильтрация выбросов завершена. Выбросов не обнаружено.")
+        logging.info(
+            f"Фильтрация выбросов завершена. Всего скорректировано точек: {n}" if n else "Фильтрация выбросов завершена. Выбросов не обнаружено.")
         return filtered
 
     def build_model(
-        self, contours, scan_numbers, angles=None, center=None, delaunay_alpha=None
+            self, contours, scan_numbers, angles=None, center=None, delaunay_alpha=None
     ):
         try:
             if not contours or not scan_numbers:
@@ -336,99 +541,34 @@ class ModelBuilder:
             else:
                 initial_angles = angles[:]
 
-            # Интерполяция контуров
-            current_contours = contours[:]
+            # Ресэмплируем контуры
+            current_contours = [self._resample_contour(c) for c in contours]
             current_angles = initial_angles[:]
 
-            if len(current_angles) > 1:
-                current_effective_angle_step = (
-                    sorted(current_angles)[1] - sorted(current_angles)[0]
-                )
-            else:
-                current_effective_angle_step = 180
-
-            # Цикл интерполяции
-
-            for i, existing_contour in enumerate(current_contours):
-                current_contours[i] = self._resample_contour(current_contours[i])
-
-            interpolation_iteration = 0
-            while current_effective_angle_step > TARGET_MIN_ANGLE_STEP + 1e-9:
-                interpolation_iteration += 1
-                logging.info(
-                    f"Interpolation iteration {interpolation_iteration}: Current effective angle step {current_effective_angle_step:.2f} degrees. Target: {TARGET_MIN_ANGLE_STEP:.2f} degrees."
-                )
-
-                new_contours, new_angles = self._perform_interpolation_step(
-                    current_contours, current_angles
-                )
-
-                if len(new_contours) == len(current_contours):
-                    logging.info(
-                        "Interpolation step did not increase contour density. Stopping interpolation."
-                    )
-                    break
-
-                current_contours = new_contours
-                current_angles = new_angles
-
-                if len(current_angles) > 1:
-                    current_effective_angle_step = (
-                        sorted(current_angles)[1] - sorted(current_angles)[0]
-                    )
-                else:
-                    logging.warning(
-                        "Only one contour remains after interpolation. Stopping."
-                    )
-                    break
-
-                if interpolation_iteration > 15:
-                    logging.warning(
-                        "Too many interpolation iterations, potential infinite loop detected. Stopping."
-                    )
-                    break
-
-            contours = current_contours
-            angles = current_angles
-            scan_numbers = list(range(1, len(contours) + 1))
-            logging.info(
-                f"Final number of contours after interpolation: {len(contours)}, with angular step: {current_effective_angle_step:.2f} degrees."
-            )
-
             # --- ФИЛЬТРАЦИЯ ВЫБРОСОВ ---
-            # Преобразуем список контуров (которые сейчас являются 2D) в список 3D-точек для фильтрации
-            # Затем обратно в 2D-контуры для остальной логики.
-            # Это может показаться неэффективным, но пока это самый простой способ интегрировать 3D-фильтр
-            # до окончательного построения 3D-модели.
             if center is None:
                 center = (self.IMAGE_WIDTH // 2, self.IMAGE_HEIGHT // 2)
 
             contours_as_3d_points = []
-            for contour in contours:
+            for contour in current_contours:
                 current_contour_3d_points = []
                 for point in contour:
                     x, y = point[0]
                     x_physical = (x - center[0]) / self.scale_x
                     y_physical = (center[1] - y) / self.scale_y
-                    # На этом этапе z_3d = 0, поскольку мы еще не применили поворот
-                    # x_3d и z_3d будут пересчитаны после фильтрации
                     current_contour_3d_points.append(
                         [x_physical, y_physical, 0.0]
-                    )  # Z пока 0
+                    )
                 contours_as_3d_points.append(np.array(current_contour_3d_points))
 
             # Применяем фильтрацию выбросов
             filtered_3d_points_per_contour = self._filter_outliers(
-                contours_as_3d_points, angles, center
-            )  # Передаем center
+                contours_as_3d_points, current_angles, center
+            )
 
             # Преобразуем отфильтрованные 3D-точки обратно в 2D-контуры (для совместимости с существующим кодом)
-            # Однако, фактически мы будем использовать эти 3D-точки для построения финальной модели
-            # Эта часть кода немного избыточна, но пока она соответствует текущей структуре.
             filtered_contours = []
             for contour_3d_points in filtered_3d_points_per_contour:
-                # Здесь мы берем только X и Y компоненты (по сути, 2D проекцию на плоскость XY)
-                # и приводим их обратно к пикселям для корректного формата контура OpenCV
                 temp_contour_2d = np.array(
                     [
                         [
@@ -445,11 +585,9 @@ class ModelBuilder:
             # а не filtered_contours.
 
             # Создание 3D точек
-            # Center уже определен выше.
-            # points_list теперь формируем из filtered_3d_points_per_contour
             points_list = []
             for i, contour_3d_points_array in enumerate(filtered_3d_points_per_contour):
-                angle_rad = angles[i] * np.pi / 180
+                angle_rad = current_angles[i] * np.pi / 180
                 for p_physical in contour_3d_points_array:
                     x_physical = p_physical[0]
                     y_physical = p_physical[1]
@@ -473,9 +611,9 @@ class ModelBuilder:
 
             self.points = points
 
-            # НОВОЕ: Сохраняем отфильтрованные 3D-срезы и интерполированные углы для детальной отрисовки контуров
+            # НОВОЕ: Сохраняем отфильтрованные 3D-срезы и углы для детальной отрисовки контуров
             self.individual_contour_3d_points = filtered_3d_points_per_contour
-            self.angles = angles
+            self.angles = current_angles
 
             # Создание 3D модели
             current_delaunay_alpha = (
@@ -499,9 +637,10 @@ class DebugViewer(QtWidgets.QDialog):
         super().__init__(parent)
         self.setWindowTitle("Отладочный просмотрщик изображений")
         self.setGeometry(200, 200, 1000, 700)
-        self.images, self.scan_numbers, self.contours, self.image_files = [], [], [], []
+        self.images, self.angles, self.scan_numbers, self.contours, self.image_files = [], [], [], [], []
         self.current_index = 0
         self.init_ui()
+
     def init_ui(self):
         layout = QtWidgets.QVBoxLayout(self)
         info_layout = QtWidgets.QHBoxLayout()
@@ -539,29 +678,30 @@ class DebugViewer(QtWidgets.QDialog):
         help_label.setStyleSheet("font-size: 10px; color: gray; font-style: italic;")
         help_layout.addWidget(help_label)
         layout.addLayout(help_layout)
-    def set_data(self, images, scan_numbers, contours, image_files):
-        self.images, self.scan_numbers, self.contours, self.image_files = images, scan_numbers, contours, image_files
+
+    def set_data(self, images, angles, scan_numbers, contours, image_files):
+        self.images, self.angles, self.scan_numbers, self.contours, self.image_files = images, angles, scan_numbers, contours, image_files
         self.current_index = 0
         if self.images:
             self.update_navigation_buttons()
             self.show_current_image()
         else:
             self.info_label.setText("Нет данных для отображения")
+
     def update_navigation_buttons(self):
         self.prev_button.setEnabled(self.current_index > 0)
         self.next_button.setEnabled(self.current_index < len(self.images) - 1)
+
     def show_current_image(self):
         if not self.images or self.current_index >= len(self.images):
             return
         img = self.images[self.current_index]
+        angle = self.angles[self.current_index] if self.current_index < len(self.angles) else "N/A"
         scan_number = self.scan_numbers[self.current_index] if self.current_index < len(self.scan_numbers) else "N/A"
         contour = self.contours[self.current_index] if self.current_index < len(self.contours) else None
         file_name = self.image_files[self.current_index] if self.current_index < len(self.image_files) else "unknown"
         display_img = img.copy()
         h, w = img.shape[:2]
-        roi_h, roi_w = int(h * 0.2), int(w * 0.2)
-        cv2.rectangle(display_img, (0, 0), (roi_w, roi_h), (0, 255, 255), 2)
-        cv2.putText(display_img, "ROI", (5, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         if contour is not None:
             n_contours = len(self.contours)
             if n_contours > 0:
@@ -571,7 +711,9 @@ class DebugViewer(QtWidgets.QDialog):
                 color = (0, 255, 0)
             cv2.drawContours(display_img, [contour], -1, color, 2)
         display_img_rgb = cv2.cvtColor(display_img, cv2.COLOR_BGR2RGB)
-        h, w, ch = display_img_rgb.shape
+        h = display_img_rgb.shape[0]
+        w = display_img_rgb.shape[1]
+        ch = display_img_rgb.shape[2]
         bytes_per_line = ch * w
         qimg = QtGui.QImage(display_img_rgb.data, w, h, bytes_per_line, QtGui.QImage.Format.Format_RGB888)
         pixmap = QtGui.QPixmap.fromImage(qimg)
@@ -580,7 +722,7 @@ class DebugViewer(QtWidgets.QDialog):
         self.view.setSceneRect(QRectF(pixmap.rect()))
         self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         self.info_label.setText(f"Изображение {self.current_index + 1}/{len(self.images)} | "
-                                f"Номер скана: {scan_number} | "
+                                f"Номер скана: {scan_number} | Угол стрелки: {angle}° | "
                                 f"Файл: {Path(file_name).name}")
         details = []
         if contour is not None:
@@ -598,22 +740,30 @@ class DebugViewer(QtWidgets.QDialog):
             details.append(f"Распознан номер: {scan_number}")
         else:
             details.append("Номер не распознан")
+        if angle != "N/A":
+            details.append(f"Распознан угол стрелки: {angle}°")
+        else:
+            details.append("Угол стрелки не распознан")
         details.append(f"Размер: {w}x{h} пикселей")
         self.details_label.setText(" | ".join(details))
+
     def show_previous(self):
         if self.current_index > 0:
             self.current_index -= 1
             self.update_navigation_buttons()
             self.show_current_image()
+
     def show_next(self):
         if self.current_index < len(self.images) - 1:
             self.current_index += 1
             self.update_navigation_buttons()
             self.show_current_image()
+
     def resizeEvent(self, event):
         super().resizeEvent(event)
         if self.scene and not self.scene.sceneRect().isEmpty():
             self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
+
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Left:
             self.show_previous()
@@ -626,6 +776,7 @@ class DebugViewer(QtWidgets.QDialog):
             self.view.fitInView(self.scene.sceneRect(), Qt.AspectRatioMode.KeepAspectRatio)
         else:
             super().keyPressEvent(event)
+
     def wheelEvent(self, event):
         if event.angleDelta().y() > 0:
             self.view.scale(1.1, 1.1)
@@ -647,6 +798,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.delaunay_alpha = DELAUNAY_ALPHA
         self.debug_viewer = DebugViewer(self)
         self.init_ui()
+
     def init_ui(self):
         self.create_menu_bar()
         central_widget = QtWidgets.QWidget()
@@ -664,6 +816,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.progress_bar.setValue(0)
         self.progress_bar.setVisible(False)
         layout.addWidget(self.progress_bar)
+
     def create_menu_bar(self):
         menubar = self.menuBar()
         file_menu = menubar.addMenu("&Файл")
@@ -695,12 +848,14 @@ class MainWindow(QtWidgets.QMainWindow):
         about_action.setStatusTip("Информация о программе")
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
     def show_about(self):
         QtWidgets.QMessageBox.about(self, "О программе",
-            "3D Scan Processor\n\n"
-            "Программа для обработки 3D сканов и расчета объема\n"
-            "Использует PyVista для 3D визуализации\n\n"
-            "Версия 1.0")
+                                    "3D Scan Processor\n\n"
+                                    "Программа для обработки 3D сканов и расчета объема\n"
+                                    "Использует PyVista для 3D визуализации\n\n"
+                                    "Версия 1.0")
+
     def _set_progress(self, visible: bool, maximum: int = 100, value: int = 0, text: str = ""):
         if self.progress_bar is not None:
             self.progress_bar.setVisible(visible)
@@ -709,21 +864,22 @@ class MainWindow(QtWidgets.QMainWindow):
             self.progress_bar.setMaximum(maximum)
             self.progress_bar.setValue(value)
             QtWidgets.QApplication.processEvents()
+
     def _is_mesh_closed_and_manifold(self, mesh):
         """Проверяет, что mesh manifold, без дыр, с объёмом и хотя бы одной гранью."""
         try:
             return (
-                hasattr(mesh, 'is_manifold') and mesh.is_manifold and
-                hasattr(mesh, 'n_open_edges') and mesh.n_open_edges == 0 and
-                hasattr(mesh, 'n_faces') and mesh.n_faces > 0 and
-                hasattr(mesh, 'volume') and mesh.volume > 0
+                    hasattr(mesh, 'is_manifold') and mesh.is_manifold and
+                    hasattr(mesh, 'n_open_edges') and mesh.n_open_edges == 0 and
+                    hasattr(mesh, 'n_faces') and mesh.n_faces > 0 and
+                    hasattr(mesh, 'volume') and mesh.volume > 0
             )
         except Exception as e:
             logging.error(f"Ошибка проверки замкнутости mesh: {e}")
             return False
 
     def _find_optimal_alpha(
-        self, contours, scan_numbers, angles, initial_delaunay_alpha
+            self, contours, scan_numbers, angles, initial_delaunay_alpha
     ):
         logging.info(
             "Starting optimal DELAUNAY_ALPHA search for closed manifold mesh..."
@@ -785,6 +941,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             show_error(f"Ошибка обработки: {str(e)}")
             logging.error(f"Ошибка обработки: {str(e)}", exc_info=True)
+
     def select_folder(self):
         try:
             folder = QtWidgets.QFileDialog.getExistingDirectory(
@@ -792,12 +949,12 @@ class MainWindow(QtWidgets.QMainWindow):
             )
             if folder:
                 self.reader.directory = Path(folder)
-                images, scan_numbers, image_shape = self.reader.read_images()
+                images, arrow_angles, scan_numbers, image_shape = self.reader.read_images()
                 if image_shape is None:
                     show_error("Не удалось определить разрешение изображений")
                     raise ValueError("Не удалось определить разрешение изображений")
                 image_height, image_width = image_shape[:2]
-                N = len(scan_numbers)
+                N = len(arrow_angles)
                 if N == 0:
                     show_error(
                         "Не найдено ни одного валидного изображения для построения модели"
@@ -812,8 +969,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     raise ValueError(
                         f"Количество кадров ({N}) не делит 180 нацело. Угол между срезами должен быть целым числом. Попробуйте другое количество кадров."
                     )
-                angle = 180 // N
-                angles = [i * angle for i in range(N)]
+                angle_step = 180 // N
+                angles = [i * angle_step for i in range(N)]
                 self.builder = ModelBuilder(image_width, image_height)
                 self._set_progress(True, len(images), 0, "Обработка изображений: %p%")
                 contours = self._extract_contours(images)
@@ -822,6 +979,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     show_error("Не удалось извлечь ни одного контура")
                     raise ValueError("Не удалось извлечь ни одного контура")
                 self.last_contours = contours
+                self.last_arrow_angles = arrow_angles
                 self.last_scan_numbers = scan_numbers
                 self.last_angles = angles
                 self.last_images = images
@@ -842,6 +1000,7 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception as e:
             show_error(f"Ошибка обработки: {str(e)}")
             logging.error(f"Ошибка обработки: {str(e)}", exc_info=True)
+
     def _extract_contours(self, images: list) -> list:
         """Извлекает контуры из списка изображений."""
         contours = []
@@ -855,6 +1014,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 contours.append(contour)
             self._set_progress(True, len(images), idx + 1)
         return contours
+
     def open_settings(self):
         dialog = QtWidgets.QDialog(self)
         dialog.setWindowTitle("Настройки масштаба")
@@ -963,14 +1123,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     outlier_absolute_threshold_mm
                 )
                 if (
-                    hasattr(self, "last_contours")
-                    and hasattr(self, "last_scan_numbers")
-                    and hasattr(self, "last_angles")
+                        hasattr(self, "last_contours")
+                        and hasattr(self, "last_arrow_angles")
+                        and hasattr(self, "last_angles")
                 ):
                     self.builder.n_resample_points = self.resample_points
                     model = self.builder.build_model(
                         self.last_contours,
-                        self.last_scan_numbers,
+                        self.last_arrow_angles,
                         angles=self.last_angles,
                         delaunay_alpha=self.delaunay_alpha,
                     )
@@ -984,6 +1144,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 show_error(
                     "Неверный формат масштаба, количества точек, alpha или порогов фильтрации. Используются предыдущие значения."
                 )
+
     def _reset_scales(self, scale_x_input, scale_y_input):
         """Reset scale inputs to default values."""
         if self.builder is None:
@@ -994,6 +1155,7 @@ class MainWindow(QtWidgets.QMainWindow):
         scale_y_input.setText(
             f"{self.builder.IMAGE_HEIGHT / self.builder.REAL_HEIGHT:.2f}"
         )
+
     def visualize_model(self, mesh):
         try:
             if self.plotter is not None:
@@ -1020,9 +1182,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 line_width=0.75,
             )
             if (
-                self.builder is not None
-                and hasattr(self.builder, "individual_contour_3d_points")
-                and hasattr(self.builder, "angles")
+                    self.builder is not None
+                    and hasattr(self.builder, "individual_contour_3d_points")
+                    and hasattr(self.builder, "angles")
             ):
                 individual_contour_3d_points_list = (
                     self.builder.individual_contour_3d_points
@@ -1051,8 +1213,8 @@ class MainWindow(QtWidgets.QMainWindow):
                         for j in range(num_points_in_contour):
                             p1_idx = j
                             p2_idx = (
-                                j + 1
-                            ) % num_points_in_contour
+                                             j + 1
+                                     ) % num_points_in_contour
                             segments.extend([2, p1_idx, p2_idx])
                         lines = np.array(segments, dtype=np.int32)
                         poly = pv.PolyData(rotated_group_points)
@@ -1068,13 +1230,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.plotter.update()
         except Exception as e:
             show_error(f"Ошибка визуализации: {str(e)}")
+
     def copy_volume(self, event):
         QtWidgets.QApplication.clipboard().setText(self.volume_label.text())
+
     def open_debug_viewer(self):
         if not hasattr(self, "last_images") or not self.last_images:
             show_error("Нет данных для отладки. Сначала выберите папку с изображениями.")
             return
-        self.debug_viewer.set_data(self.last_images, self.last_scan_numbers, self.last_contours, self.last_image_files)
+        self.debug_viewer.set_data(self.last_images, self.last_arrow_angles, self.last_scan_numbers, self.last_contours, self.last_image_files)
         self.debug_viewer.show()
         self.debug_viewer.raise_()
         self.debug_viewer.activateWindow()
