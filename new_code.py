@@ -22,7 +22,7 @@ DEFAULT_REAL_HEIGHT = 2.0
 SCAN_NUMBER_MIN = 1
 SCAN_NUMBER_MAX = 99
 DELAUNAY_ALPHA = 50.0
-CONTOUR_APPROX_RATE = 0.000225
+CONTOUR_APPROX_RATE = 0.0001
 CONTOUR_MIN_POINTS = 4
 VOLUME_DIVIDER = 1000.0
 OUTLIER_THRESHOLD_PERCENT_DEFAULT = 0.25
@@ -51,8 +51,7 @@ def show_error(message: str, level: str = "critical"):
 
 
 # === УТИЛИТЫ ДЛЯ РАБОТЫ С ИЗОБРАЖЕНИЯМИ ===
-# --- Исправление длинных однострочников в DataReader ---
-def resample_contour(contour: np.ndarray, n_points: int = 100) -> np.ndarray:
+def resample_contour(contour: np.ndarray, n_points: int = 120) -> np.ndarray:
     pts = contour.squeeze()
     if len(pts.shape) == 1:
         pts = pts[None, :]
@@ -182,7 +181,6 @@ class DataReader:
         SYMMETRY_EPSILON = 1e-2
 
         try:
-            # === ШАГ 1: ПРЕДОБРАБОТКА И ПОИСК КОНТУРА (без изменений) ===
             hsv = cv2.cvtColor(roi_bgr, cv2.COLOR_BGR2HSV)
             lower = np.array([28, 16, 165], dtype=np.uint8)
             upper = np.array([36, 255, 255], dtype=np.uint8)
@@ -206,7 +204,6 @@ class DataReader:
 
             contour_points = contour[:, 0, :]
 
-            # === ШАГ 2: ПОИСК БАЗОВЫХ ГЕОМЕТРИЧЕСКИХ СВОЙСТВ ===
             M = cv2.moments(contour)
             if M['m00'] == 0:
                 return None, None, None, None, None
@@ -218,7 +215,6 @@ class DataReader:
             main_axis_direction = np.array([vx, vy]).reshape(-1)
             main_axis_point = np.array([x0, y0]).reshape(-1)
 
-            # === ШАГ 3: ПОИСК "ПЛЕЧ" НАКОНЕЧНИКА ===
             # Вектор, перпендикулярный главной оси
             normal_vector = np.array([-main_axis_direction[1], main_axis_direction[0]])
             
@@ -235,12 +231,10 @@ class DataReader:
             # Середина "плеч" наконечника
             barbs_midpoint = (p_wide1 + p_wide2) / 2.0
 
-            # === ШАГ 4: ОПРЕДЕЛЕНИЕ НАПРАВЛЕНИЯ ПО АСИММЕТРИИ ===
             # Вектор от центра масс к середине плеч. Он указывает на наконечник.
             orientation_vector = barbs_midpoint - centroid
             orientation_vector_norm = np.linalg.norm(orientation_vector)
 
-            # === ШАГ 5: ОБРАБОТКА СИММЕТРИЧНЫХ СЛУЧАЕВ (ПЛАН Б) ===
             if orientation_vector_norm < SYMMETRY_EPSILON:
                 # Фигура симметрична, центр масс не дает информации о направлении.
                 # Используем старый метод для поиска кандидатов на наконечник/основание.
@@ -265,7 +259,6 @@ class DataReader:
                 # Основной путь: используем вектор ориентации
                 arrow_direction = orientation_vector / orientation_vector_norm
 
-            # === ШАГ 6: ФИНАЛЬНЫЙ ПОИСК НАКОНЕЧНИКА И ОСНОВАНИЯ ===
             # Проецируем все точки на НАДЕЖНЫЙ вектор направления
             final_projections = (contour_points - centroid) @ arrow_direction
             
@@ -275,7 +268,6 @@ class DataReader:
             tip = contour_points[tip_idx]
             base = contour_points[base_idx]
 
-            # === ШАГ 7: РАСЧЁТ УГЛА ===
             vec = tip - base
             # Проверка, что вектор не нулевой
             if np.linalg.norm(vec) == 0:
@@ -393,11 +385,11 @@ class DataReader:
             use_angle = len(valid_by_angle) == len(image_data) and len(set(d['angle'] for d in valid_by_angle)) == len(valid_by_angle)
             if use_number:
                 sorted_data = sorted(image_data, key=lambda d: d['number'])
-                if use_angle:
-                    angle_sorted = sorted(image_data, key=lambda d: d['angle'])
-                    for i, d in enumerate(sorted_data):
-                        if abs(d['angle'] - angle_sorted[i]['angle']) > 0.1:
-                            show_error(f"Несовпадение порядка: номер {d['number']} не соответствует углу {d['angle']:.2f} (файл: {d['file'].name})", level="warning")
+                #if use_angle:
+                    #angle_sorted = sorted(image_data, key=lambda d: d['angle'])
+                    #for i, d in enumerate(sorted_data):
+                    #    if abs(d['angle'] - angle_sorted[i]['angle']) > 0.1:
+                    #        show_error(f"Несовпадение порядка: номер {d['number']} не соответствует углу {d['angle']:.2f} (файл: {d['file'].name})", level="warning")
                 self.images = [d['img'] for d in sorted_data]
                 self.scan_numbers = [d['number'] for d in sorted_data]
                 self.arrow_angles = [d['angle'] for d in sorted_data]
@@ -433,8 +425,8 @@ class ImageProcessor:
                       saturation_threshold: float = 0.0, hue_max: int = 40) -> np.ndarray:
         try:
             hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-            lower = np.array([9, 26, 0], dtype=np.uint8)
-            upper = np.array([68, 255, 255], dtype=np.uint8)
+            lower = np.array([2, 29, 145], dtype=np.uint8)
+            upper = np.array([59, 255, 255], dtype=np.uint8)
             mask = cv2.inRange(hsv, lower, upper)
             h, w = mask.shape
             kernel_size = min(MORPH_KERNEL_MAX_SIZE, h, w)
@@ -443,8 +435,9 @@ class ImageProcessor:
                 return None
             mask = mask.astype(np.uint8)
             kernel = np.ones((kernel_size, kernel_size), np.uint8)
-            mask = cv2.dilate(mask, kernel, iterations=1)
-            mask = cv2.erode(mask, kernel, iterations=1)
+            #kernel_big = np.ones((kernel_size + 1, kernel_size + 1), np.uint8)
+            mask = cv2.dilate(mask, kernel, iterations=2)
+            #mask = cv2.erode(mask, kernel, iterations=1)
             #mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_CLOSE, kernel)
             #for _ in range(3):
             #    mask = cv2.morphologyEx(mask.astype(np.uint8), cv2.MORPH_OPEN, kernel)
@@ -467,7 +460,7 @@ class ImageProcessor:
 
 class ModelBuilder:
     def __init__(self, image_width, image_height, real_width=DEFAULT_REAL_WIDTH, real_height=DEFAULT_REAL_HEIGHT,
-                 n_resample_points=100):
+                 n_resample_points=120):
         self.settings = ModelSettings(real_width=real_width, real_height=real_height,
                                       scale_x=image_width / real_width if real_width else 1.0,
                                       scale_y=image_height / real_height if real_height else 1.0,
@@ -485,35 +478,9 @@ class ModelBuilder:
         logging.info(f"Scale set: X,Z={self.scale_x:.2f}, Y={self.scale_y:.2f} pixels/mm")
 
     def _resample_contour(self, contour, n_points=None):
-        n = n_points or getattr(self, 'n_resample_points', 100)
+        n = n_points or getattr(self, 'n_resample_points', 120)
         return resample_contour(contour, n)
 
-    def _filter_outliers(self, contours_3d_points_list, angles, center):
-        if not self.outlier_detection_enabled or len(contours_3d_points_list) < 3:
-            return contours_3d_points_list
-        filtered = []
-        n = 0
-        for i, curr in enumerate(contours_3d_points_list):
-            prev = contours_3d_points_list[(i - 1) % len(contours_3d_points_list)]
-            nxt = contours_3d_points_list[(i + 1) % len(contours_3d_points_list)]
-            if prev.shape[0] != curr.shape[0] or nxt.shape[0] != curr.shape[0]:
-                filtered.append(curr)
-                continue
-            r_curr = np.abs(curr[:, 0])
-            r_prev = np.abs(prev[:, 0])
-            r_next = np.abs(nxt[:, 0])
-            mod = np.copy(curr)
-            for j in range(curr.shape[0]):
-                avg = (r_prev[j] + r_next[j]) / 2.0
-                if (avg < self.outlier_absolute_threshold_mm * 2 and abs(
-                        r_curr[j] - avg) > self.outlier_absolute_threshold_mm) or (
-                        avg > 1e-9 and abs(r_curr[j] - avg) / avg > self.outlier_threshold_percent):
-                    mod[j] = (prev[j] + nxt[j]) / 2.0
-                    n += 1
-            filtered.append(mod)
-        logging.info(
-            f"Фильтрация выбросов завершена. Всего скорректировано точек: {n}" if n else "Фильтрация выбросов завершена. Выбросов не обнаружено.")
-        return filtered
 
     def build_model(
             self, contours, scan_numbers, angles=None, center=None, delaunay_alpha=None
@@ -545,7 +512,26 @@ class ModelBuilder:
             current_contours = [self._resample_contour(c) for c in contours]
             current_angles = initial_angles[:]
 
-            # --- ФИЛЬТРАЦИЯ ВЫБРОСОВ ---
+            # === ПРОГРЕССИВНОЕ СМЕШИВАНИЕ КОНТУРОВ С СОСЕДЯМИ ===
+            n = len(current_contours)
+            max_neighbors = n   # число соседей с каждой стороны
+            if len(current_contours) > 1:
+                mixed_contours = []
+                for i, contour in enumerate(current_contours):
+                    weighted_sum = np.zeros_like(contour.squeeze(), dtype=np.float64)
+                    weights = []
+                    # k=0 — сам контур
+                    for k in range(-max_neighbors, max_neighbors+1):
+                        idx = (i + k) % n
+                        neighbor = current_contours[idx].squeeze()
+                        weight = 1.0 / (abs(k) + 1.5) if k != 0 else 0.4
+                        weighted_sum += neighbor * weight
+                        weights.append(weight)
+                    total_weight = sum(weights)
+                    mixed = weighted_sum / total_weight
+                    mixed_contours.append(mixed.astype(np.int32).reshape(-1,1,2))
+                current_contours = mixed_contours
+
             if center is None:
                 center = (self.IMAGE_WIDTH // 2, self.IMAGE_HEIGHT // 2)
 
@@ -561,32 +547,9 @@ class ModelBuilder:
                     )
                 contours_as_3d_points.append(np.array(current_contour_3d_points))
 
-            # Применяем фильтрацию выбросов
-            filtered_3d_points_per_contour = self._filter_outliers(
-                contours_as_3d_points, current_angles, center
-            )
-
-            # Преобразуем отфильтрованные 3D-точки обратно в 2D-контуры (для совместимости с существующим кодом)
-            filtered_contours = []
-            for contour_3d_points in filtered_3d_points_per_contour:
-                temp_contour_2d = np.array(
-                    [
-                        [
-                            int(p[0] * self.scale_x + center[0]),
-                            int(center[1] - p[1] * self.scale_y),
-                        ]
-                        for p in contour_3d_points
-                    ],
-                    dtype=np.int32,
-                ).reshape(-1, 1, 2)
-                filtered_contours.append(temp_contour_2d)
-
-            # Важно: для построения 3D модели мы будем использовать filtered_3d_points_per_contour
-            # а не filtered_contours.
-
             # Создание 3D точек
             points_list = []
-            for i, contour_3d_points_array in enumerate(filtered_3d_points_per_contour):
+            for i, contour_3d_points_array in enumerate(contours_as_3d_points):
                 angle_rad = current_angles[i] * np.pi / 180
                 for p_physical in contour_3d_points_array:
                     x_physical = p_physical[0]
@@ -599,10 +562,6 @@ class ModelBuilder:
                     points_list.append([x_3d, y_3d, z_3d])
 
             points = np.array(points_list)
-            unique_points = np.unique(points, axis=0)
-            logging.info(
-                f"Всего точек: {points.shape[0]}, уникальных: {unique_points.shape[0]}"
-            )
             if points.shape[0] < 4:
                 show_error(f"Недостаточно точек для триангуляции: {points.shape[0]}")
                 raise ValueError(
@@ -611,8 +570,7 @@ class ModelBuilder:
 
             self.points = points
 
-            # НОВОЕ: Сохраняем отфильтрованные 3D-срезы и углы для детальной отрисовки контуров
-            self.individual_contour_3d_points = filtered_3d_points_per_contour
+            self.individual_contour_3d_points = contours_as_3d_points
             self.angles = current_angles
 
             # Создание 3D модели
@@ -794,7 +752,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.builder = None
         self.plotter = None
         self.progress_bar = None
-        self.resample_points = 250
+        self.resample_points = 100
         self.delaunay_alpha = DELAUNAY_ALPHA
         self.debug_viewer = DebugViewer(self)
         self.init_ui()
@@ -885,11 +843,11 @@ class MainWindow(QtWidgets.QMainWindow):
             "Starting optimal DELAUNAY_ALPHA search for closed manifold mesh..."
         )
         try:
-            low_alpha = 4.0
-            high_alpha = 400.0
+            low_alpha = 1.0
+            high_alpha = 1000.0
             best_alpha = None
             best_mesh = None
-            max_iterations = 20
+            max_iterations = 10
             found = False
             self._set_progress(True, max_iterations, 0, "Поиск Alpha: %p%")
             for i in range(max_iterations):
