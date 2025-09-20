@@ -69,9 +69,15 @@ class MainForm(QMainWindow):
         self.set_volume(0)
         self.plot.clear_axes_labels()
 
-    def draw_point_cloud(self, xs: ndarray, ys: ndarray, zs: ndarray):
+    def draw_point_cloud(self, points: ndarray, interpolated_points: ndarray):
+        xs, ys, zs = points
         colormap = plt.get_cmap("turbo")
         self.plot.axes.scatter3D(xs, ys, zs, s=1, c=zs, cmap=colormap)
+        
+        if interpolated_points.size > 0: # Check if interpolated_points is not empty
+            interp_xs, interp_ys, interp_zs = interpolated_points
+            self.plot.axes.scatter3D(interp_xs, interp_ys, interp_zs, s=1, c='white')
+
         self.plot.clear_axes_labels()
 
     def set_volume(self, volume: float):
