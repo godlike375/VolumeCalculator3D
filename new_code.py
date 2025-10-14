@@ -26,6 +26,166 @@ from collections import deque
 import skimage.morphology as morphology
 
 
+def find_closest_points_pairs(contour1, contour2, threshold_distance):
+    """
+    Находит все пары точек (по одной из каждого контура),
+    расстояние между которыми меньше threshold_distance.
+
+    Args:
+        contour1 (np.ndarray): Контур 1, форма (N, 1, 2) или (N, 2).
+        contour2 (np.ndarray): Контур 2, форма (M, 1, 2) или (M, 2).
+        threshold_distance (float): Порог расстояния.
+
+    Returns:
+        list of tuples: Список кортежей (pt1, pt2), где pt1 - точка из contour1,
+                        pt2 - точка из contour2, и dist(pt1, pt2) < threshold_distance.
+    """
+    if contour1 is None or contour2 is None or len(contour1) == 0 or len(contour2) == 0:
+        return []
+
+    pts1 = contour1.squeeze().reshape(-1, 2).astype(np.int32)
+    pts2 = contour2.squeeze().reshape(-1, 2).astype(np.int32)
+
+    close_pairs = []
+    threshold_sq = threshold_distance ** 2
+
+    for pt1 in pts1:
+        for pt2 in pts2:
+            dist_sq = (pt1[0] - pt2[0])**2 + (pt1[1] - pt2[1])**2
+            if dist_sq < threshold_sq:
+                close_pairs.append((tuple(pt1), tuple(pt2)))
+
+    return close_pairs
+
+def are_contours_close_half_points_method_viz(contour1, contour2, threshold_distance, fraction=0.5):
+    """
+    Проверяет, находятся ли два контура близко друг к другу.
+    Критерий: доля точек КАЖДОГО контура, которые находятся близко к точкам ДРУГОГО,
+    должна быть >= fraction.
+
+    Использует `find_closest_points_pairs` для нахождения близких пар.
+
+    Returns:
+        tuple: (bool result, np.ndarray image, dict details)
+    """
+    if contour1 is None or contour2 is None or len(contour1) == 0 or len(contour2) == 0:
+        img = np.zeros((1, 1, 3), dtype=np.uint8)
+        details = {
+            "close_pairs_ratio": 0.0, "close_pairs_count": 0, "total_pairs": 0,
+            "points_c1": len(contour1) if contour1 is not None else 0,
+            "points_c2": len(contour2) if contour2 is not None else 0,
+            "close_points_c1": 0, "close_points_c2": 0,
+            "ratio_c1_to_c2": 0.0, "ratio_c2_to_c1": 0.0
+        }
+        return False, img, details
+
+    pts1 = contour1.squeeze().reshape(-1, 2).astype(np.float32)
+    pts2 = contour2.squeeze().reshape(-1, 2).astype(np.float32)
+
+    N, M = len(pts1), len(pts2)
+    if N == 0 or M == 0:
+        img = np.zeros((1, 1, 3), dtype=np.uint8)
+        details = {
+            "close_pairs_ratio": 0.0, "close_pairs_count": 0, "total_pairs": 0,
+            "points_c1": N, "points_c2": M,
+            "close_points_c1": 0, "close_points_c2": 0,
+            "ratio_c1_to_c2": 0.0, "ratio_c2_to_c1": 0.0
+        }
+        return False, img, details
+
+    close_pairs = find_closest_points_pairs(contour1, contour2, threshold_distance)
+
+    points1_close_mask = np.zeros(N, dtype=bool)
+    points2_close_mask = np.zeros(M, dtype=bool)
+
+    for pt1, pt2 in close_pairs:
+        idx1 = np.where((pts1[:, 0] == pt1[0]) & (pts1[:, 1] == pt1[1]))[0]
+        if len(idx1) > 0:
+            points1_close_mask[idx1[0]] = True
+        idx2 = np.where((pts2[:, 0] == pt2[0]) & (pts2[:, 1] == pt2[1]))[0]
+        if len(idx2) > 0:
+            points2_close_mask[idx2[0]] = True
+
+    close_points_c1 = int(np.sum(points1_close_mask))
+    close_points_c2 = int(np.sum(points2_close_mask))
+
+    ratio_c1_to_c2 = close_points_c1 / N if N > 0 else 0.0
+    ratio_c2_to_c1 = close_points_c2 / M if M > 0 else 0.0
+
+    result = (ratio_c1_to_c2 >= fraction) and (ratio_c2_to_c1 >= fraction)
+
+    # Возвращаем пустую картинку, так как визуализация здесь не используется
+    img = np.zeros((1, 1, 3), dtype=np.uint8)
+    total_pairs = N * M
+    overall_ratio = len(close_pairs) / total_pairs if total_pairs > 0 else 0.0
+    details = {
+        "close_pairs_ratio": overall_ratio, "close_pairs_count": len(close_pairs), "total_pairs": total_pairs,
+        "points_c1": N, "points_c2": M,
+        "close_points_c1": close_points_c1, "close_points_c2": close_points_c2,
+        "ratio_c1_to_c2": ratio_c1_to_c2, "ratio_c2_to_c1": ratio_c2_to_c1,
+        "result_criterion_met": result
+    }
+    return result, img, details
+
+def merge_close_contours_via_bridges(contour1, contour2, threshold_distance):
+    """
+    Сшивает два контура, рисуя "мостики" между всеми парами близких точек
+    и находя новый контур через findContours.
+
+    Returns:
+        tuple: (bool success, np.ndarray merged_contour or None, str message)
+    """
+    if contour1 is None or contour2 is None:
+        if contour1 is not None and len(contour1) > 0:
+            return True, contour1, "Второй контур None, возвращаем первый."
+        if contour2 is not None and len(contour2) > 0:
+            return True, contour2, "Первый контур None, возвращаем второй."
+        return False, None, "Оба контура None или пусты."
+
+    if len(contour1) == 0:
+        return True, contour2, "Первый контур пуст, возвращаем второй."
+    if len(contour2) == 0:
+        return True, contour1, "Второй контур пуст, возвращаем первый."
+
+    pts1 = contour1.squeeze().reshape(-1, 2).astype(np.int32)
+    pts2 = contour2.squeeze().reshape(-1, 2).astype(np.int32)
+
+    all_pts = np.vstack([pts1, pts2])
+    min_x, min_y = all_pts.min(axis=0) - Settings.MASK_PADDING
+    max_x, max_y = all_pts.max(axis=0) + Settings.MASK_PADDING
+    min_x, min_y = max(0, min_x), max(0, min_y)
+    width = max(1, max_x - min_x)
+    height = max(1, max_y - min_y)
+    mask = np.zeros((height, width), dtype=np.uint8)
+
+    pts1_mask = pts1 - np.array([min_x, min_y])
+    pts2_mask = pts2 - np.array([min_x, min_y])
+
+    cv2.fillPoly(mask, [pts1_mask], 255)
+    cv2.fillPoly(mask, [pts2_mask], 255)
+
+    close_pairs = find_closest_points_pairs(contour1, contour2, threshold_distance)
+    if not close_pairs:
+        return False, None, f"Не найдено близких точек (порог: {threshold_distance})."
+
+    for pt1, pt2 in close_pairs:
+        pt1_mask = (pt1[0] - min_x, pt1[1] - min_y)
+        pt2_mask = (pt2[0] - min_x, pt2[1] - min_y)
+        cv2.line(mask, pt1_mask, pt2_mask, 255, thickness=1)
+
+    contours_found, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours_found:
+        return False, None, "Не удалось найти объединённый контур после рисования мостиков."
+
+    largest_contour = max(contours_found, key=cv2.contourArea)
+    merged_contour_global = largest_contour + np.array([min_x, min_y])
+    if len(merged_contour_global) < 3:
+        return False, None, f"Объединённый контур содержит менее 3 точек: {len(merged_contour_global)}"
+
+    merged_contour_formatted = merged_contour_global.reshape(-1, 1, 2).astype(np.int32)
+    return True, merged_contour_formatted, f"Контуры успешно объединены через {len(close_pairs)} мостиков. Новый контур: {len(merged_contour_formatted)} точек."
+
+
 LOG_FILENAME = "scan_processor.log"
 LOG_FORMAT = "%(asctime)s - %(levelname)s - %(message)s"
 LOG_LEVEL = logging.INFO
@@ -96,7 +256,6 @@ class ErrorCollector:
         if not self.errors:
             return ""
         
-        # Группируем по типу ошибки
         grouped = defaultdict(list)
         for error in self.errors:
             grouped[error.error_type].append(error)
@@ -119,11 +278,6 @@ class ErrorCollector:
         if not self.errors:
             return
         
-        # Выводим сводку в консоль
-        print(self.get_summary())
-        print(self.get_grouped_report())
-        
-        # Показываем окно только если есть ошибки
         app = QApplication.instance()
         if app:
             dlg = ErrorReportDialog(self, parent)
@@ -166,8 +320,8 @@ class ErrorReportDialog(QtWidgets.QDialog):
         layout.addWidget(btn)
 
 
-# Глобальный экземпляр ErrorCollector для использования в коде
 _global_error_collector = ErrorCollector()
+
 
 def get_error_collector() -> ErrorCollector:
     """Получить глобальный экземпляр ErrorCollector"""
@@ -179,37 +333,8 @@ def reset_error_collector():
     _global_error_collector.clear()
 
 
-def resample_contour(contour: np.ndarray, n_points: int = 150) -> np.ndarray:
-    pts = contour.squeeze()
-    if len(pts.shape) == 1:
-        pts = pts[None, :]
-    if pts.shape[0] < 2:
-        return contour
-    closed_pts = np.vstack([pts, pts[0]])
-    seg_vecs = np.diff(closed_pts, axis=0)
-    seg_lens = np.sqrt(np.sum(seg_vecs ** 2, axis=1))
-    cum = np.concatenate([[0.0], np.cumsum(seg_lens)])
-    total = float(cum[-1])
-    if total <= 0:
-        return contour.astype(np.float32).reshape(-1, 1, 2)
-    # Семплируем без дублирования начальной точки
-    targets = np.linspace(0.0, total, int(n_points), endpoint=False)
-    new_pts = []
-    for t in targets:
-        # Найти сегмент, куда попадает t
-        idx = int(np.searchsorted(cum, t, side='right') - 1)
-        idx = max(0, min(idx, len(seg_lens) - 1))
-        t0, t1 = cum[idx], cum[idx + 1]
-        p0 = closed_pts[idx]
-        p1 = closed_pts[idx + 1]
-        alpha = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
-        new_pts.append((1.0 - alpha) * p0 + alpha * p1)
-    # Возвращаем с плавающей точкой для сохранения точности; приводите к int там, где это требуется OpenCV
-    return np.array(new_pts, dtype=np.float32).reshape(-1, 1, 2)
-
-
 class Settings:
-    MIN_CONTOUR_AREA = 40
+    MIN_CONTOUR_AREA = 50
     CONFIDENCE_THRESHOLD = 0.01
     TARGET_NORM_SIZE = (20, 32)
     MORPH_KERNEL_MAX_SIZE = 10
@@ -241,6 +366,28 @@ class Settings:
     MIN_CONTOUR_POINTS = 4
     MIN_ANGLE_BETWEEN_CONTOURS = 1.25
     OBJECT_TRACKING_MAX_DISTANCE_RATIO = 2.25
+    MASK_PADDING = 10
+    REPAIR_ANGLE_THRESHOLD = 150.0
+    REPAIR_MIN_N = 3
+    REPAIR_WINDOW_DIVISOR = 8.5
+    REPAIR_MARGIN = 5
+    REPAIR_EXPANSION_FACTOR = 1.2
+    REPAIR_DESIRED_DEPTH = 2
+    MERGE_DISTANCE_MIN = 5.0
+    MERGE_DISTANCE_FACTOR = 0.05
+    LABEL_MIN_AREA = 72
+    NUMBER_MIN_CONTOUR_AREA = 4
+    THIN_CONTOUR_THRESHOLD = 0.1
+    ANGLE_WRAP_THRESHOLD = -90
+    TRACK_REFLECTION_THRESHOLD = 170
+    RESAMPLE_N_POINTS_DEFAULT = 150
+    VIS_LINE_WIDTH_ORIG = 3.0
+    VIS_LINE_WIDTH_INTERP = 1.5
+    VIS_OPACITY_ORIG = 1.0
+    VIS_OPACITY_INTERP = 0.2
+    VIS_BACKGROUND = [0.1, 0.1, 0.15]
+    WHEEL_SCALE_FACTOR = 1.1
+    ANGLE_MOD = 180.0
 
     @classmethod
     def save(cls, path="settings.json"):
@@ -259,60 +406,116 @@ class Settings:
         except Exception:
             pass
 
+Settings.load()
+
+
+def resample_contour(contour: np.ndarray, n_points: int = Settings.RESAMPLE_N_POINTS_DEFAULT) -> np.ndarray:
+    pts = contour.squeeze()
+    if len(pts.shape) == 1:
+        pts = pts[None, :]
+    if pts.shape[0] < 2:
+        return contour
+    closed_pts = np.vstack([pts, pts[0]])
+    seg_vecs = np.diff(closed_pts, axis=0)
+    seg_lens = np.sqrt(np.sum(seg_vecs ** 2, axis=1))
+    cum = np.concatenate([[0.0], np.cumsum(seg_lens)])
+    total = float(cum[-1])
+    if total <= 0:
+        return contour.astype(np.float32).reshape(-1, 1, 2)
+    # Семплируем без дублирования начальной точки
+    targets = np.linspace(0.0, total, int(n_points), endpoint=False)
+    new_pts = []
+    for t in targets:
+        # Найти сегмент, куда попадает t
+        idx = int(np.searchsorted(cum, t, side='right') - 1)
+        idx = max(0, min(idx, len(seg_lens) - 1))
+        t0, t1 = cum[idx], cum[idx + 1]
+        p0 = closed_pts[idx]
+        p1 = closed_pts[idx + 1]
+        alpha = 0.0 if t1 <= t0 else (t - t0) / (t1 - t0)
+        new_pts.append((1.0 - alpha) * p0 + alpha * p1)
+    # Возвращаем с плавающей точкой для сохранения точности; приводите к int там, где это требуется OpenCV
+    return np.array(new_pts, dtype=np.float32).reshape(-1, 1, 2)
+
 
 class SettingsDialog(QtWidgets.QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Настройки")
-        self.setMinimumWidth(500)
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(500)
         self.inputs = {}
         tab_widget = QtWidgets.QTabWidget(self)
         tabs = [
-            ("Масштаб и основное", [
+            ("Основные", [
                 ("DEFAULT_REAL_WIDTH", "Реальная ширина (мм)", float),
                 ("DEFAULT_REAL_HEIGHT", "Реальная высота (мм)", float),
                 ("SCAN_NUMBER_MIN", "Мин. номер скана", int),
                 ("SCAN_NUMBER_MAX", "Макс. номер скана", int),
                 ("CONFIDENCE_THRESHOLD", "Порог уверенности цифры", float),
+                ("VOLUME_DIVIDER", "Делитель объёма (мм³ в мл)", float),
             ]),
-            ("Стрелка", [
+            ("Распознавание", [
                 ("ARROW_HSV_LOWER", "HSV-низ стрелки (через запятую)", list),
                 ("ARROW_HSV_UPPER", "HSV-верх стрелки (через запятую)", list),
                 ("ARROW_SYMMETRY_EPSILON", "Эпсилон симметрии стрелки", float),
                 ("ARROW_ROI_PERCENT", "ROI стрелки (% от размера)", float),
-            ]),
-            ("Номер", [
+                ("ARROW_MIN_CONTOUR_AREA", "Мин. площадь контура стрелки", int),
+                ("ARROW_MIN_CONTOUR_POINTS", "Мин. точки контура стрелки", int),
                 ("NUMBER_BIN_THRESH", "Порог бинаризации номера", int),
                 ("NUMBER_ROI_PERCENT", "ROI номера (% от размера)", float),
+                ("TARGET_NORM_SIZE", "Размер нормализации цифр (через запятую)", list),
+                ("NUMBER_MIN_CONTOUR_AREA", "Мин. площадь контура цифры", int),
             ]),
-            ("Морфология", [
+            ("Обработка изображения", [
                 ("MORPH_KERNEL_MAX_SIZE", "Макс. размер ядра", int),
                 ("MORPH_DILATE_ITER", "Итераций дилатации", int),
-                ("MORPH_ERODE_KERNEL_DIV_W", "Делитель ядра эрозии (ширина)", float),
-                ("MORPH_ERODE_KERNEL_DIV_H", "Делитель ядра эрозии (высота)", float),
                 ("MORPH_ERODE_EXTRA_ITERATIONS", "Доп. итераций эрозии", int),
-            ]),
-            ("HSV фильтр", [
+                ("MORPH_KERNEL_LABEL_SIZE", "Размер ядра для меток", int),
+                ("LABEL_MIN_AREA", "Мин. площадь для меток", int),
                 ("CONTOUR_HSV_LOWER", "HSV-низ контура (через запятую)", list),
                 ("CONTOUR_HSV_UPPER", "HSV-верх контура (через запятую)", list),
-            ]),
-            ("3D/Контуры", [
-                ("CONTOUR_APPROX_RATE", "Коэф. аппроксимации", float),
-                ("VOLUME_DIVIDER", "Делитель объёма (мм³ в мл)", float),
-                ("OBJECT_TRACKING_MAX_DISTANCE_RATIO", "Порог дистанции трекинга (доля)", float),
-            ]),
-            ("Прочее", [
+                ("LABEL_HSV_LOWER", "HSV-низ меток (через запятую)", list),
+                ("LABEL_HSV_UPPER", "HSV-верх меток (через запятую)", list),
                 ("SATURATION_THRESHOLD", "Порог насыщенности", int),
-                ("TEMPLATES_DIR", "Папка шаблонов", str),
+            ]),
+            ("3D Моделирование", [
+                ("CONTOUR_APPROX_RATE", "Коэф. аппроксимации", float),
+                ("OBJECT_TRACKING_MAX_DISTANCE_RATIO", "Порог дистанции трекинга (доля)", float),
+                ("MIN_ANGLE_BETWEEN_CONTOURS", "Мин. угол между контурами", float),
+                ("MASK_PADDING", "Отступ для маски", int),
+                ("REPAIR_ANGLE_THRESHOLD", "Порог угла ремонта", float),
+                ("REPAIR_MIN_N", "Мин. размер окна ремонта", int),
+                ("REPAIR_WINDOW_DIVISOR", "Делитель окна ремонта", float),
+                ("REPAIR_MARGIN", "Запас границ ремонта", int),
+                ("REPAIR_EXPANSION_FACTOR", "Фактор расширения боксов", float),
+                ("REPAIR_DESIRED_DEPTH", "Желаемая глубина поиска угла", int),
+                ("MERGE_DISTANCE_MIN", "Мин. порог расстояния слияния", float),
+                ("MERGE_DISTANCE_FACTOR", "Коэффициент расстояния слияния", float),
+                ("THIN_CONTOUR_THRESHOLD", "Порог тонкого контура", float),
+                ("ANGLE_WRAP_THRESHOLD", "Порог wrap угла", float),
+                ("TRACK_REFLECTION_THRESHOLD", "Порог отражения трекинга", float),
+                ("RESAMPLE_N_POINTS_DEFAULT", "Дефолт точек resampling", int),
                 ("MIN_CONTOUR_AREA", "Мин. площадь контура (пикс)", int),
+            ]),
+            ("Визуализация и прочее", [
+                ("VIS_LINE_WIDTH_ORIG", "Толщина линий оригинала", float),
+                ("VIS_LINE_WIDTH_INTERP", "Толщина линий интерполяции", float),
+                ("VIS_OPACITY_ORIG", "Непрозрачность оригинала", float),
+                ("VIS_OPACITY_INTERP", "Непрозрачность интерполяции", float),
+                ("VIS_BACKGROUND", "Фон визуализации (через запятую)", list),
+                ("WHEEL_SCALE_FACTOR", "Фактор масштаба колеса", float),
+                ("TEMPLATES_DIR", "Папка шаблонов", str),
             ])
         ]
         for title, fields in tabs:
             tab = QtWidgets.QWidget()
             layout = QtWidgets.QVBoxLayout(tab)
+            layout.setSpacing(5)
             self.add_group(layout, title, fields)
             tab_widget.addTab(tab, title)
         main_layout = QtWidgets.QVBoxLayout(self)
+        main_layout.setSpacing(10)
         main_layout.addWidget(tab_widget)
         btn_layout = QtWidgets.QHBoxLayout()
         buttons = [
@@ -330,11 +533,17 @@ class SettingsDialog(QtWidgets.QDialog):
         self.load_settings()
 
     def add_group(self, parent_layout, title, fields):
+        if not fields:
+            return
         group = QtWidgets.QGroupBox(title)
         vbox = QtWidgets.QVBoxLayout(group)
+        vbox.setSpacing(3)  # Уменьшенный отступ между полями
         for key, label, typ in fields:
             hbox = QtWidgets.QHBoxLayout()
-            hbox.addWidget(QtWidgets.QLabel(label))
+            hbox.setSpacing(10)
+            lbl = QtWidgets.QLabel(label)
+            lbl.setMinimumWidth(250)  # Фиксированная ширина для выравнивания
+            hbox.addWidget(lbl)
             if typ == bool:
                 inp = QtWidgets.QCheckBox()
                 inp.setChecked(getattr(Settings, key, False))
@@ -345,7 +554,9 @@ class SettingsDialog(QtWidgets.QDialog):
                     inp.setText(",".join(map(str, val)))
                 else:
                     inp.setText(str(val))
+                inp.setMinimumWidth(150)
             hbox.addWidget(inp)
+            hbox.addStretch()  # Растяжение для выравнивания
             vbox.addLayout(hbox)
             self.inputs[key] = (inp, typ)
         parent_layout.addWidget(group)
@@ -356,35 +567,41 @@ class SettingsDialog(QtWidgets.QDialog):
                 if typ == bool:
                     val = inp.isChecked()
                 else:
-                    txt = inp.text()
+                    txt = inp.text().strip()
+                    if not txt:
+                        continue
                     if typ == int:
                         val = int(txt)
                     elif typ == float:
                         val = float(txt)
                     elif typ == list:
-                        val = [int(x) if x.strip().isdigit() else float(x) for x in txt.split(",") if x.strip()]
+                        val = [int(x.strip()) if x.strip().isdigit() else float(x.strip()) for x in txt.split(",") if x.strip()]
                     else:
                         val = txt
                 setattr(Settings, key, val)
-            except ValueError:
-                get_error_collector().add_warning("InvalidSettingFormat", "N/A", f"Неверный формат для настройки '{key}': '{inp.text()}'")
+            except ValueError as ve:
+                get_error_collector().add_warning("InvalidSettingFormat", "N/A", f"Неверный формат для '{key}': {inp.text()} ({str(ve)})")
         Settings.save()
+        QMessageBox.information(self, "Сохранено", "Настройки сохранены успешно.")
 
     def load_settings(self):
         Settings.load()
         for key, (inp, typ) in self.inputs.items():
             val = getattr(Settings, key, "")
             if typ == bool:
-                inp.setChecked(val)
+                inp.setChecked(bool(val))
             elif typ == list:
                 inp.setText(",".join(map(str, val)))
             else:
                 inp.setText(str(val))
 
     def reset_settings(self):
-        mod = sys.modules[Settings.__module__]
-        importlib.reload(mod)
-        self.load_settings()
+        reply = QMessageBox.question(self, "Сброс", "Сбросить все настройки к умолчанию?", QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No)
+        if reply == QMessageBox.StandardButton.Yes:
+            mod = sys.modules[Settings.__module__]
+            importlib.reload(mod)
+            self.load_settings()
+            QMessageBox.information(self, "Сброшено", "Настройки сброшены к умолчанию.")
 
 
 @dataclass
@@ -395,7 +612,7 @@ class ModelSettings:
     image_height: int = 0
     scale_x: float = 1.0
     scale_y: float = 1.0
-    resample_points: int = 100
+    resample_points: int = Settings.RESAMPLE_N_POINTS_DEFAULT
 
 
 class DataReader:
@@ -439,8 +656,7 @@ class DataReader:
         try:
             _, thresh = cv2.threshold(gray_roi, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
             contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            # Используем MIN_CONTOUR_AREA из настроек, но для цифр он может быть меньше
-            valid = [c for c in contours if cv2.contourArea(c) > 4]
+            valid = [c for c in contours if cv2.contourArea(c) > Settings.NUMBER_MIN_CONTOUR_AREA]
             if not valid:
                 get_error_collector().add_warning("NoValidContours", "N/A", "Валидные контуры числа не найдены")
                 return None
@@ -465,7 +681,8 @@ class DataReader:
             if number_img.size == 0:
                 get_error_collector().add_error("EmptyImage", "N/A", "Пустое изображение числа после вырезки bbox")
                 return None
-            return cv2.resize(number_img, Settings.TARGET_NORM_SIZE, interpolation=cv2.INTER_AREA)
+            target_size = Settings.TARGET_NORM_SIZE
+            return cv2.resize(number_img, target_size, interpolation=cv2.INTER_AREA)
         except Exception as e:
             tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             get_error_collector().add_error("NumberNormalizationError", "N/A", f"Ошибка нормализации числа: {str(e)}", tb)
@@ -551,7 +768,7 @@ class DataReader:
     def _extract_digits_from_roi(self, roi_gray):
         _, thresh = cv2.threshold(roi_gray, Settings.NUMBER_BIN_THRESH, 255, cv2.THRESH_BINARY)
         contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        bboxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > 4]
+        bboxes = [cv2.boundingRect(c) for c in contours if cv2.contourArea(c) > Settings.NUMBER_MIN_CONTOUR_AREA]
         bboxes = sorted(bboxes, key=lambda b: b[0])
         return [cv2.resize(roi_gray[y:y+h, x:x+w], Settings.TARGET_NORM_SIZE, interpolation=cv2.INTER_AREA) for x, y, w, h in bboxes]
 
@@ -579,7 +796,7 @@ class DataReader:
         try:
             filename = file_path.stem  # Без расширения
             # Приоритет: число перед '_' в конце (правильный формат, e.g., "_12")
-            match = re.search(r'_(\d+)$', filename)  # $ — конец строки
+            match = re.search(r'_(\d+)$', filename)
             if match:
                 num = int(match.group(1))
                 if Settings.SCAN_NUMBER_MIN <= num <= Settings.SCAN_NUMBER_MAX:
@@ -601,87 +818,149 @@ class DataReader:
             get_error_collector().add_warning("FilenameParseError", str(file_path), f"Не удалось извлечь число из имени файла {file_path.name}: {str(e)}")
             return None
 
-    def _extract_number(self, roi_gray):
-        """Распознает номер из ROI с помощью OCR. Возвращает int или None."""
-        try:
-            digit_imgs = self._extract_digits_from_roi(roi_gray)
-            # Оптимизация: распознаем один раз
-            recognized = [self._recognize_digit(img) for img in digit_imgs]
-            digits = [rec[0] for rec in recognized if rec[0] is not None]
-            
-            if not digits:
-                return None
-            
-            if len(digits) == 1:
-                return digits[0]
-            elif len(digits) == 2:
-                return digits[0] * 10 + digits[1]
-            else:
-                get_error_collector().add_warning("TooManyDigits", "N/A", f"Распознано {len(digits)} цифр, ожидалось 1 или 2. Используется только первая цифра.")
-                return digits[0]
-        except Exception as e:
-            tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
-            get_error_collector().add_error("NumberExtractionError", "N/A", f"Ошибка извлечения номера: {str(e)}", tb)
-            return None
-
     def read_images(self):
         try:
-            all_image_paths = sorted([p for ext in ["*.png", "*.jpg", "*.jpeg", "*.bmp"] for p in self.directory.glob(ext)], key=lambda p: p.name)
+            extensions = ["*.png", "*.jpg", "*.jpeg", "*.bmp"]
+            all_image_paths = sorted(
+                [p for ext in extensions for p in self.directory.glob(ext)],
+                key=lambda p: p.name
+            )
+            
+            if not all_image_paths:
+                raise ValueError("Не найдено ни одного изображения в директории.")
+            
+            # Шаг 1: Извлечь все числа из имён файлов и их позиции
+            filename_numbers = []  # список списков чисел для каждого файла
+            valid_paths = []       # только те пути, у которых есть хотя бы одно число
+
+            for file_path in all_image_paths:
+                filename = file_path.stem
+                numbers = [int(m) for m in re.findall(r'\d+', filename)]
+                if numbers:
+                    filename_numbers.append(numbers)
+                    valid_paths.append(file_path)
+                else:
+                    get_error_collector().add_warning(
+                        "FilenameNoDigits", str(file_path),
+                        f"В имени файла {filename} не найдено ни одной цифры."
+                    )
+            
+            if not valid_paths:
+                raise ValueError("Ни в одном файле не найдено чисел для сортировки.")
+
+            # Шаг 2: Найти позицию числа, которая есть у всех файлов и варьируется
+            varying_position = None
+            num_files = len(filename_numbers)
+            max_positions = max(len(nums) for nums in filename_numbers)
+
+            for pos in range(max_positions):
+                # Проверяем, есть ли число на позиции `pos` у всех файлов
+                if all(len(nums) > pos for nums in filename_numbers):
+                    values_at_pos = [nums[pos] for nums in filename_numbers]
+                    if len(set(values_at_pos)) == len(values_at_pos):
+                        varying_position = pos
+                        raw_numbers = values_at_pos
+                        break
+
+            # Шаг 3: Если не найдено общей варьирующейся позиции — fallback: последнее число
+            if varying_position is None:
+                logging.info("Не найдена общая варьирующаяся позиция чисел. Используется последнее число в имени файла.")
+                raw_numbers = []
+                final_valid_paths = []
+                for i, file_path in enumerate(valid_paths):
+                    filename = file_path.stem
+                    numbers = re.findall(r'\d+', filename)
+                    if numbers:
+                        num = int(numbers[-1])  # последнее число
+                        raw_numbers.append(num)
+                        final_valid_paths.append(file_path)
+                    else:
+                        # Это не должно произойти, но на всякий случай
+                        get_error_collector().add_warning(
+                            "FilenameNoDigitsFallback", str(file_path),
+                            f"Файл пропущен: нет чисел даже в fallback."
+                        )
+                valid_paths = final_valid_paths
+            else:
+                logging.info(f"Обнаружена варьирующаяся позиция чисел: #{varying_position}. Используем её для сортировки.")
+
+            # Шаг 4: Нормализация номеров: от 1 до N
+            if not raw_numbers:
+                raise ValueError("Не удалось извлечь числа даже в fallback-режиме.")
+            
+            min_val = min(raw_numbers)
+            normalized_numbers = [n - min_val + 1 for n in raw_numbers]
+
+            # Шаг 5: Проверка диапазона и уникальности
+            filtered_data = []
+            for i, (file_path, raw_num, norm_num) in enumerate(zip(valid_paths, raw_numbers, normalized_numbers)):
+                if not (Settings.SCAN_NUMBER_MIN <= norm_num <= Settings.SCAN_NUMBER_MAX):
+                    get_error_collector().add_warning(
+                        "NumberOutOfRange", str(file_path),
+                        f"Нормализованный номер {norm_num} вне диапазона [{Settings.SCAN_NUMBER_MIN}, {Settings.SCAN_NUMBER_MAX}]"
+                    )
+                    continue
+                filtered_data.append((file_path, norm_num, raw_num))
+
+            if not filtered_data:
+                raise ValueError("Все извлечённые номера вне допустимого диапазона.")
+
+            valid_paths, normalized_numbers, raw_numbers = zip(*filtered_data)
+
+            # Шаг 6: Загрузка изображений и обработка (OCR, угол и т.д. — только если номер не определён)
+            # Но у нас номер уже определён! Поэтому OCR и угол — только для доп. данных, не для сортировки.
             image_data = []
             image_shape = None
-            for file_path in all_image_paths:
+
+            for file_path, number, raw_num in zip(valid_paths, normalized_numbers, raw_numbers):
                 img_bgr = self._imread_unicode(file_path)
                 if img_bgr is None:
                     continue
                 if image_shape is None:
                     image_shape = img_bgr.shape
                 elif img_bgr.shape != image_shape:
-                    get_error_collector().add_error("ImageResolutionMismatch", str(file_path), f"Обнаружено изображение с другим разрешением: {file_path.name}")
+                    get_error_collector().add_error(
+                        "ImageResolutionMismatch", str(file_path),
+                        f"Обнаружено изображение с другим разрешением: {file_path.name}"
+                    )
                     continue
-                
-                # Приоритет 1: номер из имени файла
-                number = self._extract_number_from_filename(file_path)
-                source = "filename"
-                
-                # Приоритет 2: если нет из файла, пробуем OCR
-                if number is None:
-                    roi_num = self._find_number_roi(img_bgr)
-                    number = self._extract_number(roi_num)
-                    source = "OCR"
-                
-                # Приоритет 3: если и OCR не дал, используем угол как "номер"
-                if number is None:
-                    roi_arrow = self._find_arrow_roi(img_bgr)
-                    angle = self._extract_arrow_angle(roi_arrow)[0]
-                    if angle is not None:
-                        number = angle  # Угол как прокси для сортировки
-                        source = "angle"
-                    else:
-                        get_error_collector().add_warning("NumberDetectionFailed", str(file_path), f"Не удалось определить номер для {file_path.name} (ни файл, ни OCR, ни угол)")
-                        continue
-                
-                # Извлекаем угол независимо (для возврата, но не для сортировки)
+
+                # Извлекаем угол (для метаданных)
                 roi_arrow = self._find_arrow_roi(img_bgr)
-                angle = self._extract_arrow_angle(roi_arrow)[0]
-                
-                image_data.append({'img': img_bgr, 'angle': angle, 'number': number, 'file': file_path, 'source': source})
-                logging.info(f"Для {file_path.name} использован номер {number} из {source}")
-            
-            # Проверка валидности финальных номеров (уникальность)
+                angle = self._extract_arrow_angle(roi_arrow)[0] if roi_arrow is not None else None
+
+                image_data.append({
+                    'img': img_bgr,
+                    'angle': angle,
+                    'number': number,
+                    'file': file_path,
+                    'source': 'filename_pattern'  # или 'filename_fallback'
+                })
+                logging.info(f"Для {file_path.name} использован нормализованный номер {number} (сырое: {raw_num})")
+
+            # Шаг 7: Проверка уникальности и сортировка
             numbers = [d['number'] for d in image_data]
-            are_numbers_valid = all(n is not None for n in numbers) and len(set(numbers)) == len(numbers)
-            if not are_numbers_valid:
-                get_error_collector().add_error("InvalidNumberSequence", "N/A", "Не удалось однозначно определить уникальные номера даже после fallback'ов.")
-                raise ValueError("Не удалось однозначно определить уникальные номера даже после fallback'ов.")
-            
+            if len(set(numbers)) != len(numbers):
+                get_error_collector().add_error(
+                    "InvalidNumberSequence", "N/A",
+                    "Нормализованные номера не уникальны после обработки."
+                )
+                raise ValueError("Нормализованные номера не уникальны.")
+
             sorted_data = sorted(image_data, key=lambda d: d['number'])
-            logging.info(f"Данные отсортированы по номерам: {[d['number'] for d in sorted_data]} (источники: {[d['source'] for d in sorted_data]})")
-            
+            logging.info(f"Данные отсортированы по номерам: {[d['number'] for d in sorted_data]}")
+
             if not sorted_data:
                 raise ValueError("Не найдено ни одного валидного изображения для сортировки.")
-            
+
             self.image_files = [d['file'] for d in sorted_data]
-            return [d['img'] for d in sorted_data], [d['angle'] for d in sorted_data], [d['number'] for d in sorted_data], image_shape
+            return (
+                [d['img'] for d in sorted_data],
+                [d['angle'] for d in sorted_data],
+                [d['number'] for d in sorted_data],
+                image_shape
+            )
+
         except Exception as e:
             tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             get_error_collector().add_error("DataReadingError", "N/A", f"Ошибка чтения данных: {str(e)}", tb)
@@ -722,7 +1001,7 @@ class ImageProcessor:
         
         return mask
 
-    def is_thin_contour(self, contour, threshold=0.1):
+    def is_thin_contour(self, contour, threshold=Settings.THIN_CONTOUR_THRESHOLD):
         area = cv2.contourArea(contour)
         perimeter = cv2.arcLength(contour, closed=True)
         
@@ -773,12 +1052,13 @@ class ImageProcessor:
             current = next_pos
 
     def repair_breaks(self, mask: np.ndarray, label_boxes: List[Tuple[int, int, int, int]],
-        angle_threshold: float = 150.0) -> np.ndarray:
+        angle_threshold: float = Settings.REPAIR_ANGLE_THRESHOLD, des_depth: int = Settings.REPAIR_DESIRED_DEPTH) -> np.ndarray:
         """
         Функция ремонта разрывов в скелете.
         :param mask: Бинарная маска скелета (H x W, uint8, 0/255).
         :param label_boxes: Список bounding boxes (x, y, w, h) для зон разрывов.
         :param angle_threshold: Допустимая разница углов в градусах.
+        :param des_depth: Желаемая глубина для угла.
         :return: Отремонтированная маска.
         """
 
@@ -792,8 +1072,8 @@ class ImageProcessor:
         working_mask = mask.copy()
         H, W = mask.shape
         avg_dim = (H + W) // 2
-        N = max(3, int(avg_dim / 8.5))  # Размер окна NxN (не используется, но оставлено для совместимости)
-        margin = 5  # Запас для границ маски
+        N = max(Settings.REPAIR_MIN_N, int(avg_dim / Settings.REPAIR_WINDOW_DIVISOR))  # Размер окна NxN (не используется, но оставлено для совместимости)
+        margin = Settings.REPAIR_MARGIN  # Запас для границ маски
 
         def _is_inside_box(y: int, x: int, box: Tuple[int, int, int, int]) -> bool:
             """Проверяет, лежит ли точка внутри бокса."""
@@ -815,7 +1095,7 @@ class ImageProcessor:
         ]
         extended_boxes = label_boxes + boundary_boxes
 
-        def _find_endpoints_in_boxes(m: np.ndarray, boxes: List[Tuple[int, int, int, int]], H: int, W: int, expansion_factor: float = 1.2) -> List[Dict[str, Tuple[int, int]]]:
+        def _find_endpoints_in_boxes(m: np.ndarray, boxes: List[Tuple[int, int, int, int]], H: int, W: int, expansion_factor: float = Settings.REPAIR_EXPANSION_FACTOR) -> List[Dict[str, Tuple[int, int]]]:
             """Находит endpoints только внутри расширенных указанных боксов."""
             endpoints = []
             offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
@@ -867,11 +1147,10 @@ class ImageProcessor:
             depth_map = {}
             depth_map[(y, x)] = 0
             offsets = [(-1, -1), (-1, 0), (-1, 1), (0, -1), (0, 1), (1, -1), (1, 0), (1, 1)]
-            max_search_depth = 20  # Лимит для предотвращения полного сканирования
 
             while queue:
                 cy, cx, depth = queue.popleft()
-                if (cy, cx) in visited or depth > max_search_depth:
+                if (cy, cx) in visited:
                     continue
                 visited.add((cy, cx))
                 depth_map[(cy, cx)] = depth
@@ -906,12 +1185,12 @@ class ImageProcessor:
             return [ep for ep in active_endpoints if not ep['connected'] and ep != current_ep and _is_inside_box(ep['pos'][0], ep['pos'][1], target_box)]
 
         def _select_best_candidate(m: np.ndarray, candidates: List[Dict], angle_current: float,
-                                angle_threshold: float, curr_y: int, curr_x: int) -> Optional[Dict]:
+                                angle_threshold: float, curr_y: int, curr_x: int, des_depth: int) -> Optional[Dict]:
             """Выбирает лучшего кандидата по углу и расстоянию. Если нет по углу - ближайший по расстоянию."""
             valid_candidates = []
             for cand in candidates:
                 cand_y, cand_x = cand['pos']
-                angle_cand, _ = _get_direction_angle(m, cand_y, cand_x, 2)
+                angle_cand, _ = _get_direction_angle(m, cand_y, cand_x, des_depth)
 
                 # Разница углов (минимальная, 0-180)
                 delta_angle = min(abs(angle_current - angle_cand), 360 - abs(angle_current - angle_cand))
@@ -982,7 +1261,7 @@ class ImageProcessor:
                 if current_ep['connected']:
                     continue
                 y, x = current_ep['pos']
-                angle_current, _ = _get_direction_angle(working_mask, y, x, 2)
+                angle_current, _ = _get_direction_angle(working_mask, y, x, des_depth)
 
                 # Шаг 2: Поиск кандидатов (не подключенные в том же боксе)
                 candidates = _get_unconnected_candidates(active_endpoints, current_ep, extended_boxes)
@@ -990,7 +1269,7 @@ class ImageProcessor:
                     continue
 
                 # Шаг 3: Выбор лучшего
-                best_cand = _select_best_candidate(working_mask, candidates, angle_current, angle_threshold, y, x)
+                best_cand = _select_best_candidate(working_mask, candidates, angle_current, angle_threshold, y, x, des_depth)
                 if best_cand:
                     cand_y, cand_x = best_cand['pos']
                     # Шаг 4: Соединение
@@ -1017,10 +1296,38 @@ class ImageProcessor:
         contours, _ = cv2.findContours(contour_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         if not contours:
             return []
-        result_segments = []
-        for c in contours:
-            if cv2.contourArea(c) > 30:
-                result_segments.append(c)
+
+        # Базовая фильтрация по минимальной площади
+        result_segments = [c for c in contours if cv2.contourArea(c) > Settings.MIN_CONTOUR_AREA]
+
+        # Интеграция логики проверки близости и сшивания контуров
+        if len(result_segments) > 1:
+            H, W = contour_mask.shape[:2]
+            # Порог расстояния пропорционален размеру изображения (аналогичная идея, как в примере)
+            threshold_distance = max(Settings.MERGE_DISTANCE_MIN, Settings.MERGE_DISTANCE_FACTOR * float(max(H, W)))
+
+            changed = True
+            while changed and len(result_segments) > 1:
+                changed = False
+                i = 0
+                while i < len(result_segments):
+                    j = i + 1
+                    while j < len(result_segments):
+                        is_close, _, _ = are_contours_close_half_points_method_viz(
+                            result_segments[i], result_segments[j], threshold_distance, fraction=0.5
+                        )
+                        if is_close:
+                            success, merged_contour, _ = merge_close_contours_via_bridges(
+                                result_segments[i], result_segments[j], threshold_distance
+                            )
+                            if success and merged_contour is not None and cv2.contourArea(merged_contour) > Settings.MIN_CONTOUR_AREA:
+                                result_segments[i] = merged_contour
+                                del result_segments[j]
+                                changed = True
+                                continue  # Продолжаем с тем же j-индексом после удаления
+                        j += 1
+                    i += 1
+
         return result_segments
 
     def _approximate_and_resample(self, contour: np.ndarray, approximation_rate: float, n_points: int) -> np.ndarray:
@@ -1044,7 +1351,7 @@ class ImageProcessor:
             label_kernel_size = Settings.MORPH_KERNEL_LABEL_SIZE
             label_mask = self._apply_morphology(label_mask, (h, w), label_kernel_size)
             label_contours, _ = cv2.findContours(label_mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
-            label_boxes = [cv2.boundingRect(c) for c in label_contours if cv2.contourArea(c) > 72]
+            label_boxes = [cv2.boundingRect(c) for c in label_contours if cv2.contourArea(c) > Settings.LABEL_MIN_AREA]
             try:
                 contour_mask = cv2.ximgproc.thinning(contour_mask)
             except cv2.error as e:
@@ -1061,7 +1368,7 @@ class ImageProcessor:
                 return []
 
             processed_contours = [
-                self._approximate_and_resample(c, approximation_rate, n_points=150)
+                self._approximate_and_resample(c, approximation_rate, n_points=Settings.RESAMPLE_N_POINTS_DEFAULT)
                 for c in all_contours
             ]
             return processed_contours
@@ -1085,9 +1392,8 @@ class TrackedObject:
         return last_idx, self.contours[last_idx]
 
 
-# --- ИСПРАВЛЕНО: Класс ModelBuilder с фиксом бага в интерполяции ---
 class ModelBuilder:
-    def __init__(self, image_width, image_height, real_width=Settings.DEFAULT_REAL_WIDTH, real_height=Settings.DEFAULT_REAL_HEIGHT, n_resample_points=250):
+    def __init__(self, image_width, image_height, real_width=Settings.DEFAULT_REAL_WIDTH, real_height=Settings.DEFAULT_REAL_HEIGHT, n_resample_points=Settings.RESAMPLE_N_POINTS_DEFAULT):
         self.settings = ModelSettings(
             real_width=real_width,
             real_height=real_height,
@@ -1103,8 +1409,6 @@ class ModelBuilder:
         self.scale_y = self.settings.scale_y
         self.n_resample_points = n_resample_points
         self.tracked_objects: List[TrackedObject] = []
-        # --- ВОССТАНОВЛЕНО: Поля для хранения промежуточных результатов ---
-        self.points = None
         self.individual_contour_3d_points = None
         self.angles = None
         self.final_contours = None
@@ -1112,7 +1416,6 @@ class ModelBuilder:
         self.final_scan_numbers = None
         self.is_original_contour = None
 
-    # --- ИЗМЕНЕНО: Добавлен параметр angles; обновлена логика отражения для больших углов ---
     def track_objects(self, all_slices_contours: List[List[np.ndarray]], original_scan_numbers: List[int], angles: List[float]):
         active_tracks: List[TrackedObject] = []
         completed_tracks: List[TrackedObject] = []
@@ -1132,12 +1435,9 @@ class ModelBuilder:
 
         for i in range(num_slices):
             current_contours = all_slices_contours[i]
-            # --- ИЗМЕНЕНО: Правило 1: Если >2 контуров на скане — все они разные объекты ---
-            if len(current_contours) > 2:
-                logging.warning(f"Скан {i}: более 2 контуров ({len(current_contours)}), все считаются разными объектами.")
-                # Разбиваем на отдельные "одиночные" треки, не пытаясь объединять на этом скане
+            if len(current_contours) > 1:
+                logging.warning(f"Скан {i}: более 1 контура ({len(current_contours)}), все считаются разными объектами.")
 
-            # --- ИЗМЕНЕНО: Правило 2: Проверка на разрыв (пустой скан) — сбрасываем активные треки ---
             if not current_contours and active_tracks:
                 logging.info(f"Скан {i}: пустой скан (разрыв), завершаем все активные треки: {len(active_tracks)}")
                 completed_tracks.extend(active_tracks)
@@ -1146,7 +1446,6 @@ class ModelBuilder:
             unmatched_contours_indices = list(range(len(current_contours)))
             
             if active_tracks and current_contours:
-                # --- ИЗМЕНЕНО: Сопоставление только с ближайшим предыдущим сканом, без учёта разрывов ---
                 # Вычисляем расстояния только для активных треков (каждый трек имеет ровно один контур на предыдущем скане)
                 matched = set()
                 for t_idx, track in enumerate(active_tracks):
@@ -1156,10 +1455,9 @@ class ModelBuilder:
                     m_prev = cv2.moments(last_contour)
                     c_prev = (m_prev['m10'] / m_prev['m00'], m_prev['m01'] / m_prev['m00']) if m_prev['m00'] != 0 else (0, 0)
                     
-                    # --- ИЗМЕНЕНО: Вычисление углового расстояния и отражение, если >170° ---
                     angle_diff = abs(angles[i] - angles[prev_slice_idx])
                     angular_dist = min(angle_diff, 360 - angle_diff)
-                    needs_reflection = angular_dist > 170
+                    needs_reflection = angular_dist > Settings.TRACK_REFLECTION_THRESHOLD
                     
                     best_c_idx = None
                     min_dist = np.inf
@@ -1177,21 +1475,19 @@ class ModelBuilder:
                         m_curr = cv2.moments(contour_to_use)
                         c_curr = (m_curr['m10'] / m_curr['m00'], m_curr['m01'] / m_curr['m00']) if m_curr['m00'] != 0 else (0, 0)
                         dist = np.linalg.norm(np.array(c_prev) - np.array(c_curr))
-                        if dist < min_dist and dist <= max_dist:  # --- ИЗМЕНЕНО: Правило 3: Только если dist <= max_dist ---
+                        if dist < min_dist and dist <= max_dist:
                             min_dist = dist
                             best_c_idx = c_idx
                     
                     if best_c_idx is not None:
-                        # Используем оригинальный контур (без отражения) для трека
                         contour = current_contours[best_c_idx]
                         track.contours[i] = contour
                         if original_scan_numbers[i] is not None:
                             track.original_slice_indices.add(i)
                         matched.add(best_c_idx)
-                        unmatched_contours_indices.remove(best_c_idx)  # Удаляем сопоставленный
+                        unmatched_contours_indices.remove(best_c_idx)
                         logging.debug(f"Трек {track.id}: сопоставлен контур {best_c_idx} на скане {i} (dist={min_dist:.1f}, reflection={needs_reflection})")
 
-                # --- ИЗМЕНЕНО: Завершаем треки, которые не нашли пару (расстояние > max_dist) ---
                 remaining_active_tracks = []
                 for track in active_tracks:
                     if i in track.contours:
@@ -1201,7 +1497,6 @@ class ModelBuilder:
                         logging.debug(f"Трек {track.id}: прерван на скане {i} (расстояние слишком велико)")
                 active_tracks = remaining_active_tracks
 
-            # --- ИЗМЕНЕНО: Новые треки только для несопоставленных контуров ---
             for c_idx in unmatched_contours_indices:
                 new_track = TrackedObject(id=next_obj_id)
                 new_track.contours[i] = current_contours[c_idx]
@@ -1211,16 +1506,13 @@ class ModelBuilder:
                 next_obj_id += 1
                 logging.debug(f"Новый трек {new_track.id} начат на скане {i}, контур {c_idx}")
 
-        # Завершаем оставшиеся активные треки
         completed_tracks.extend(active_tracks)
         
-        # --- ИЗМЕНЕНО: Фильтрация: только треки с >2 оригинальными срезами ---
-        final_tracks = [t for t in completed_tracks if len(t.original_slice_indices) > 2]
+        final_tracks = [t for t in completed_tracks if len(t.original_slice_indices) > 1]
         
         self.tracked_objects = final_tracks
         logging.info(f"Трекинг завершен. Найдено {len(final_tracks)} валидных объектов (из {next_obj_id} потенциальных).")
 
-    # --- ИСПРАВЛЕНО: Добавлен angles в вызов track_objects ---
     def process_and_build_all_models(self, all_slices_contours, scan_numbers, angles, center=None):
         self.track_objects(all_slices_contours, scan_numbers, angles)
         
@@ -1249,13 +1541,24 @@ class ModelBuilder:
                 if len(prepared_contours) < 2:
                     get_error_collector().add_warning("InsufficientSlices", f"object_{obj.id}", f"Объект ID {obj.id} имеет недостаточно срезов для построения модели. Пропуск.")
                     continue
+                if center is None:
+                    center = (self.IMAGE_WIDTH // 2, self.IMAGE_HEIGHT // 2)
 
-                mesh = self.build_point_cloud_and_mesh(prepared_contours, prepared_angles, center)
+                contours_as_3d_points = []
+                for contour in prepared_contours:
+                    if contour is None: continue
+                    current_contour_3d_points = [
+                        [(p[0][0] - center[0]) / self.scale_x, (center[1] - p[0][1]) / self.scale_y, 0.0]
+                        for p in contour
+                    ]
+                    contours_as_3d_points.append(np.array(current_contour_3d_points))
+                self.individual_contour_3d_points = contours_as_3d_points
+                self.angles = prepared_angles
+
                 
                 results.append({
                     "id": obj.id,
-                    "mesh": mesh,
-                    "volume_mm3": 0.0, # Будет вычислено позже
+                    "volume_mm3": 0.0,
                     "final_contours": prepared_contours,
                     "final_angles": prepared_angles,
                     "final_scan_numbers": prepared_scans,
@@ -1270,7 +1573,6 @@ class ModelBuilder:
         
         return results
 
-    # --- ВОССТАНОВЛЕН ПОЛНЫЙ ОРИГИНАЛЬНЫЙ МЕТОД ИНТЕРПОЛЯЦИИ С ОТЗЕРКАЛИВАНИЕМ ---
     def prepare_contours(self, contours, scan_numbers, angles: List[float], center=None):
         if not any(c is not None for c in contours):
             return [], [], [], []
@@ -1297,7 +1599,6 @@ class ModelBuilder:
         logging.info(f"Итеративная интерполяция: {original_count} исходных контуров -> {len(final_contours)} контуров")
         return final_contours, final_angles, final_scans, is_original
 
-    # --- ИСПРАВЛЕНО: Фикс бага — интерполировать только одиночные пропуски (gap==1) ---
     def _fill_missing_contours(self, contours, angles, scan_numbers):
         n = len(contours)
         if n == 0: raise ValueError("Список контуров пуст")
@@ -1310,16 +1611,12 @@ class ModelBuilder:
                 
             prev_idx, next_idx = self._find_valid_neighbors(contours_list, idx)
             
-            # ИСПРАВЛЕНО: Только если prev и next — непосредние соседи (одиночный пропуск)
             if prev_idx != -1 and next_idx != -1:
                 dist_to_prev = (idx - prev_idx + n) % n
                 dist_to_next = (next_idx - idx + n) % n
                 if dist_to_prev == 1 and dist_to_next == 1:
                     self._interpolate_gap(contours_list, angles_list, scans_list, idx, prev_idx, next_idx)
                     continue
-            
-            # ИСПРАВЛЕНО: Удалено копирование от дальнего valid — оставляем None для больших gap или краёв
-            # (scans_list[idx] уже -1)
         
         return contours_list, angles_list, scans_list
 
@@ -1353,7 +1650,6 @@ class ModelBuilder:
         contours[current_idx] = interp
         scans[current_idx] = -1
 
-    # --- ИСПРАВЛЕНО: Фикс — пропускать интерполяцию углов, если c1 или c2 None ---
     def _add_missing_angles(self, contours, angles, scans, center):
         n = len(contours)
         is_original = [sn is not None and sn != -1 for sn in scans]
@@ -1364,7 +1660,6 @@ class ModelBuilder:
             c1, a1, s1, o1 = contours[i], angles[i], scans[i], is_original[i]
             c2, a2 = contours[(i + 1) % n], angles[(i + 1) % n]
             
-            # ИСПРАВЛЕНО: Пропускаем добавление и интерполяцию, если c1 None (чтобы избежать gap)
             if c1 is None:
                 continue
                 
@@ -1373,10 +1668,9 @@ class ModelBuilder:
             final_scans.append(s1)
             final_is_original.append(o1)
             
-            # ИСПРАВЛЕНО: Интерполируем только если c2 not None
             if c2 is not None:
                 angle_diff = a2 - a1
-                is_wrap = angle_diff < -90  # Переход через 180 градусов
+                is_wrap = angle_diff < Settings.ANGLE_WRAP_THRESHOLD  # Переход через 180 градусов
                 if is_wrap:
                     angle_diff += 180.0
                     
@@ -1392,7 +1686,7 @@ class ModelBuilder:
                     
                     for j in range(1, n_to_insert + 1):
                         linear_alpha = j / n_segments
-                        interp_angle = (a1 + linear_alpha * angle_diff) % 180.0
+                        interp_angle = (a1 + linear_alpha * angle_diff) % Settings.ANGLE_MOD
                         interp_contour = self.interpolate_contour(c1, c2_for_interp, linear_alpha)
                         
                         final_contours.append(interp_contour)
@@ -1400,7 +1694,6 @@ class ModelBuilder:
                         final_scans.append(-1)
                         final_is_original.append(False)
         
-        # ИСПРАВЛЕНО: Сортировка только валидных (без None)
         valid_zipped = [(ang, cont, scn, orig) for ang, cont, scn, orig in zip(final_angles, final_contours, final_scans, final_is_original) if cont is not None]
         if not valid_zipped:
             return [], [], [], []
@@ -1409,42 +1702,6 @@ class ModelBuilder:
         angles_out, contours_out, scans_out, is_original_out = zip(*zipped)
         
         return list(contours_out), list(angles_out), list(scans_out), list(is_original_out)
-
-    def build_point_cloud_and_mesh(self, contours, angles, center=None):
-        if center is None:
-            center = (self.IMAGE_WIDTH // 2, self.IMAGE_HEIGHT // 2)
-        
-        contours_as_3d_points = []
-        for contour in contours:
-            if contour is None: continue
-            current_contour_3d_points = [
-                [(p[0][0] - center[0]) / self.scale_x, (center[1] - p[0][1]) / self.scale_y, 0.0]
-                for p in contour
-            ]
-            contours_as_3d_points.append(np.array(current_contour_3d_points))
-
-        points_list = []
-        for i, contour_3d_points in enumerate(contours_as_3d_points):
-            angle_rad = angles[i] * np.pi / 180
-            for p in contour_3d_points:
-                x_3d = p[0] * np.cos(angle_rad)
-                y_3d = p[1]
-                z_3d = p[0] * np.sin(angle_rad)
-                points_list.append([x_3d, y_3d, z_3d])
-        
-        points = np.array(points_list)
-        if points.shape[0] < 4:
-            raise ValueError(f"Недостаточно точек для триангуляции: {points.shape[0]}")
-
-        cloud = pv.PolyData(points)
-        grid = cloud.delaunay_3d(alpha=0.05, tol=0.01, offset=2.5)
-        surf = grid.extract_geometry().clean(tolerance=1e-4)
-        
-        self.points = points
-        self.individual_contour_3d_points = contours_as_3d_points
-        self.angles = angles
-        
-        return surf
 
     def interpolate_contour(self, contour1, contour2, alpha, linear_alpha=None):
         if linear_alpha is None:
@@ -1589,13 +1846,12 @@ class DebugViewer(QtWidgets.QDialog):
         help_label.setStyleSheet("font-size: 10px; color: gray; font-style: italic;")
         layout.addWidget(help_label)
 
-    # --- ИЗМЕНЕНО: Принимает списки списков для контуров и цветов ---
     def set_data(self, images: List[np.ndarray], scan_numbers: List[int], contours: List[List[np.ndarray]], angles: List[float], colors: List[List[Tuple[int, int, int]]], scan_to_image_map: Dict[int, int]):
         self.images = images
         self.scan_numbers = scan_numbers
-        self.contours = contours # Теперь это [[c1, c2], [c3], ...]
+        self.contours = contours
         self.angles = angles
-        self.colors = colors # Теперь это [[color1, color2], [color3], ...]
+        self.colors = colors
         self.scan_to_image_map = scan_to_image_map
         self.current_index = 0
         self.update_filtered_indices()
@@ -1603,7 +1859,6 @@ class DebugViewer(QtWidgets.QDialog):
             self.show_current_image()
 
     def update_filtered_indices(self):
-        # Теперь self.angles определяет количество кадров
         all_indices = list(range(len(self.angles)))
         if self.show_interpolated:
             self.filtered_indices = all_indices
@@ -1713,7 +1968,7 @@ class DebugViewer(QtWidgets.QDialog):
 
     def wheelEvent(self, event):
         delta = event.angleDelta().y()
-        factor = 1.1 if delta > 0 else 0.9
+        factor = Settings.WHEEL_SCALE_FACTOR if delta > 0 else 1 / Settings.WHEEL_SCALE_FACTOR
         self.view.scale(factor, factor)
 
 
@@ -1810,7 +2065,6 @@ class MainWindow(QtWidgets.QMainWindow):
                 return
             self.reader.directory = Path(folder)
             images, arrow_angles, scan_numbers, image_shape = self.reader.read_images()
-            print(images, scan_numbers, arrow_angles)
             if image_shape is None:
                 get_error_collector().add_error("ImageResolutionError", "N/A", "Не удалось определить разрешение изображений")
                 raise ValueError("Не удалось определить разрешение изображений")
@@ -1830,7 +2084,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 angles = arrow_angles
                 logging.info("Порядок определен по углам, используются распознанные углы.")
             
-            self.builder = ModelBuilder(image_width, image_height, n_resample_points=150)
+            self.builder = ModelBuilder(image_width, image_height, n_resample_points=Settings.RESAMPLE_N_POINTS_DEFAULT)
             
             # Устанавливаем счетчики файлов для ErrorCollector
             get_error_collector().set_file_counts(len(images), len(images))
@@ -1846,7 +2100,6 @@ class MainWindow(QtWidgets.QMainWindow):
             
             results = self.builder.process_and_build_all_models(all_slices_contours, scan_numbers, angles, center=(image_width/2, image_height/2))
             
-            # --- ИЗМЕНЕНО: Восстановлена оригинальная логика вычисления объёма ---
             for res in results:
                 contours_list = res['final_contours']
                 angles_list = res['final_angles']
@@ -1942,8 +2195,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.last_debug_data = {
             "angles": final_angles,
-            "contours": final_contours_per_frame, # Теперь это список списков
-            "colors": final_colors_per_frame,     # И это тоже
+            "contours": final_contours_per_frame,
+            "colors": final_colors_per_frame,
             "scan_numbers": final_scan_numbers,
         }
 
@@ -1951,7 +2204,7 @@ class MainWindow(QtWidgets.QMainWindow):
         try:
             if self.plotter is not None: self.plotter.clear()
             else: self.plotter = self.vtk_widget
-            self.plotter.set_background((0.1, 0.1, 0.15))
+            self.plotter.set_background(tuple(Settings.VIS_BACKGROUND))
             
             gray_color_rgb_float = (180/255, 180/255, 180/255)
 
@@ -1965,14 +2218,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     if i >= len(angles): continue
                     
                     is_orig = is_original_flags[i]
-                    color_to_use, line_width, opacity = gray_color_rgb_float, 1.5, 0.2
+                    color_to_use, line_width, opacity = gray_color_rgb_float, Settings.VIS_LINE_WIDTH_INTERP, Settings.VIS_OPACITY_INTERP
                     
                     if is_orig:
                         scan_num = scan_numbers[i]
                         if scan_num in self.scan_to_image_map:
                             original_slice_index = self.scan_to_image_map[scan_num]
                             color_to_use = tuple(slice_colors_map[original_slice_index][:3])
-                        line_width, opacity = 3.0, 1.0
+                        line_width, opacity = Settings.VIS_LINE_WIDTH_ORIG, Settings.VIS_OPACITY_ORIG
 
                     angle_rad = angles[i] * np.pi / 180
                     x_3d = group_points_raw[:, 0] * np.cos(angle_rad)
@@ -2015,7 +2268,6 @@ class MainWindow(QtWidgets.QMainWindow):
 
 
 if __name__ == "__main__":
-    Settings.load()
     app = QtWidgets.QApplication([])
     app.setQuitOnLastWindowClosed(True)
     window = MainWindow()
