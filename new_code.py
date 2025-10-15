@@ -1977,9 +1977,10 @@ def rgb_to_bgr(color):
 
 
 class MainWindow(QtWidgets.QMainWindow):
+    TITLE = "Intraocular 3D Volume Calculator"
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Intraocular 3D Volume Calculator")
+        self.setWindowTitle(self.TITLE)
         self.setGeometry(100, 100, 800, 600)
         self.reader = DataReader(".")
         self.processor = ImageProcessor()
@@ -2063,7 +2064,12 @@ class MainWindow(QtWidgets.QMainWindow):
             folder = QtWidgets.QFileDialog.getExistingDirectory(self, "Выберите папку с изображениями")
             if not folder:
                 return
-            self.reader.directory = Path(folder)
+            folder_path = Path(folder)
+            self.reader.directory = folder_path
+
+            folder_name = folder_path.name
+            self.setWindowTitle(f"{self.TITLE} - {folder_name}")
+            
             images, arrow_angles, scan_numbers, image_shape = self.reader.read_images()
             if image_shape is None:
                 get_error_collector().add_error("ImageResolutionError", "N/A", "Не удалось определить разрешение изображений")
