@@ -1,5 +1,4 @@
 import logging
-import math
 import re
 from math import lgamma
 import traceback
@@ -23,7 +22,6 @@ from collections import defaultdict, deque
 import numpy as np
 from typing import List, Tuple, Dict, Optional
 from collections import deque
-import skimage.morphology as morphology
 
 
 def calculate_mean_grayscale_in_contour(image: np.ndarray, contour: np.ndarray) -> float:
@@ -348,37 +346,37 @@ def reset_error_collector():
 
 
 class Settings:
-    MIN_CONTOUR_AREA = 50
-    CONFIDENCE_THRESHOLD = 0.01
+    MIN_CONTOUR_AREA = 40
+    CONFIDENCE_THRESHOLD = 0.7
     TARGET_NORM_SIZE = (20, 32)
-    MORPH_KERNEL_MAX_SIZE = 10
+    MORPH_KERNEL_MAX_SIZE = 4
     MORPH_KERNEL_LABEL_SIZE = 50
     DEFAULT_REAL_WIDTH = 10.0
     DEFAULT_REAL_HEIGHT = 2.0
     SCAN_NUMBER_MIN = 1
     SCAN_NUMBER_MAX = 99
-    CONTOUR_APPROX_RATE = 0.0001
+    CONTOUR_APPROX_RATE = 0.0005
     VOLUME_DIVIDER = 1000.0
     TEMPLATES_DIR = "templates"
-    ARROW_HSV_LOWER = [28, 16, 165]
+    ARROW_HSV_LOWER = [17, 16, 166]
     ARROW_HSV_UPPER = [36, 255, 255]
     ARROW_MIN_CONTOUR_AREA = 20
-    ARROW_SYMMETRY_EPSILON = 1e-2
+    ARROW_SYMMETRY_EPSILON = 0.01
     NUMBER_BIN_THRESH = 200
     NUMBER_ROI_PERCENT = 0.05
-    ARROW_ROI_PERCENT = 0.1
+    ARROW_ROI_PERCENT = 0.15
     MORPH_DILATE_ITER = 1
     MORPH_ERODE_KERNEL_DIV_W = 4
     MORPH_ERODE_KERNEL_DIV_H = 4
     MORPH_ERODE_EXTRA_ITERATIONS = 1
-    CONTOUR_HSV_LOWER = [2, 11, 0]
-    CONTOUR_HSV_UPPER = [25, 255, 255]
-    LABEL_HSV_LOWER = [39, 111, 0]
-    LABEL_HSV_UPPER = [66, 255, 255]
+    CONTOUR_HSV_LOWER = [19, 55, 0]
+    CONTOUR_HSV_UPPER = [21, 255, 255]
+    LABEL_HSV_LOWER = [38, 110, 0]
+    LABEL_HSV_UPPER = [67, 255, 255]
     SATURATION_THRESHOLD = 24
     ARROW_MIN_CONTOUR_POINTS = 10
     MIN_CONTOUR_POINTS = 4
-    MIN_ANGLE_BETWEEN_CONTOURS = 1.25
+    MIN_ANGLE_BETWEEN_CONTOURS = 2.5
     OBJECT_TRACKING_MAX_DISTANCE_RATIO = 2.25
     MASK_PADDING = 10
     REPAIR_ANGLE_THRESHOLD = 150.0
@@ -392,9 +390,9 @@ class Settings:
     LABEL_MIN_AREA = 72
     NUMBER_MIN_CONTOUR_AREA = 4
     THIN_CONTOUR_THRESHOLD = 0.1
-    ANGLE_WRAP_THRESHOLD = -90
-    TRACK_REFLECTION_THRESHOLD = 170
-    RESAMPLE_N_POINTS_DEFAULT = 150
+    ANGLE_WRAP_THRESHOLD = -90.0
+    TRACK_REFLECTION_THRESHOLD = 170.0
+    RESAMPLE_N_POINTS_DEFAULT = 1300
     VIS_LINE_WIDTH_ORIG = 3.0
     VIS_LINE_WIDTH_INTERP = 1.5
     VIS_OPACITY_ORIG = 1.0
