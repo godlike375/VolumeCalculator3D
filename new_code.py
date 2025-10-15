@@ -26,6 +26,20 @@ from collections import deque
 import skimage.morphology as morphology
 
 
+def calculate_mean_grayscale_in_contour(image: np.ndarray, contour: np.ndarray) -> float:
+    gray_image = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    mask = np.zeros(gray_image.shape, dtype=np.uint8)
+    cv2.drawContours(mask, [contour], -1, 255, cv2.FILLED)
+    masked_image = cv2.bitwise_and(gray_image, gray_image, mask=mask)
+    pixels_in_contour = masked_image[mask > 0]
+
+    if pixels_in_contour.size == 0:
+        return 0.0
+
+    average_intensity = np.mean(pixels_in_contour)
+    return average_intensity
+
+
 def find_closest_points_pairs(contour1, contour2, threshold_distance):
     """
     Находит все пары точек (по одной из каждого контура),
@@ -1366,12 +1380,14 @@ class ImageProcessor:
 
             if not all_contours:
                 return []
+            means = [calculate_mean_grayscale_in_contour(img, c) for c in all_contours]
+            mean_of_means_density = np.mean(means)                
 
             processed_contours = [
                 self._approximate_and_resample(c, approximation_rate, n_points=Settings.RESAMPLE_N_POINTS_DEFAULT)
                 for c in all_contours
             ]
-            return processed_contours
+            return processed_contours, mean_of_means_density
         except Exception as e:
             tb = "".join(traceback.format_exception(type(e), e, e.__traceback__))
             get_error_collector().add_error("ImageProcessingError", f"image_{idx}", f"Ошибка обработки изображения: {str(e)}", tb)
@@ -2097,10 +2113,14 @@ class MainWindow(QtWidgets.QMainWindow):
             
             self._set_progress(True, len(images), 0, "Обработка изображений: %p%")
             all_slices_contours = []
+            all_densities = []
             for i, img in enumerate(images):
-                contours = self.image_processor.process_image(i, img)
+                contours, mean_density = self.image_processor.process_image(i, img)
+                all_densities.append(mean_density)
                 all_slices_contours.append(contours)
                 self._set_progress(True, len(images), i + 1)
+
+            final_mean_density = np.mean(all_densities)
 
             self._set_progress(True, 100, 50, "Трекинг и построение моделей...")
             
@@ -2146,7 +2166,8 @@ class MainWindow(QtWidgets.QMainWindow):
             
             total_volume_mm3 = sum(r['volume_mm3'] for r in results)
             total_volume_ml = total_volume_mm3 / Settings.VOLUME_DIVIDER
-            report_text = f"<b>Суммарный объём: {total_volume_mm3:.3f} мм³ ({total_volume_ml:.4f} мл)</b>\n"
+            norm_density = final_mean_density / 255 * 100
+            report_text = f"<b>Суммарный объём: {total_volume_mm3:.3f} мм³ ({total_volume_ml:.4f} мл); Средняя плотность: {norm_density:.2f}%</b>\n"
             report_text += f"Найдено объектов: {len(results)}\n"
             report_text += "-"*30 + "\n"
             for res in sorted(results, key=lambda x: x['id']):
