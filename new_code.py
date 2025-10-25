@@ -1,6 +1,6 @@
 import logging
+import os
 import re
-from math import lgamma
 import traceback
 import importlib
 import sys
@@ -627,10 +627,22 @@ class ModelSettings:
     resample_points: int = Settings.RESAMPLE_N_POINTS_DEFAULT
 
 
+def get_resource_path(relative_path):
+    """Получает абсолютный путь к ресурсу, работает как в режиме разработки, так и в PyInstaller."""
+    if getattr(sys, 'frozen', False):
+        # Если приложение заморожено (PyInstaller), используем временный путь
+        base_path = sys._MEIPASS
+    else:
+        # Если приложение запущено как обычный скрипт, используем текущий каталог
+        base_path = os.path.abspath(".")
+    
+    return Path(os.path.join(base_path, relative_path))
+
+
 class DataReader:
     def __init__(self, directory, templates_dir=Settings.TEMPLATES_DIR):
         self.directory = Path(directory)
-        self.templates_dir = Path(templates_dir)
+        self.templates_dir = get_resource_path(templates_dir) 
         self.digit_templates = self._load_digit_templates()
         self.image_files = []
 
@@ -2058,9 +2070,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def show_about(self):
         QtWidgets.QMessageBox.about(self, "О программе", 
-                                    "3D Scan Processor (Multi-Object)\n"
-                                    "Версия 2.2\n"
-                                    "Программа для обработки 3D сканов и расчета объема нескольких объектов.")
+                                    "Intraocular 3D Volume Calculator\n"
+                                    "Версия 1.0\n"
+                                    "Программа предназначена для обработки множества сканов, реконструкции формы 3D объекта и расчёта объема и плотности объектов")
 
     def _set_progress(self, visible: bool, maximum: int = 100, value: int = 0, text: str = ""):
         self.progress_bar.setVisible(visible)
